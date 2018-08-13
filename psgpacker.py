@@ -64,16 +64,113 @@ class PSGFrame(object):
 #
 
 class PSGio(object):
+    """PSGio(input, output) -> PSGio object
+    
+    Creates an IO object that has both input and output methods defines.
+    The input can be an existing file object, a name to a file, or a
+    bytearray object. The same applies also for output methods.
+    
+    If an existing file object is used for the input, it should have been
+    opened using mode 'rb'. If an existing file object is used for the
+    output, it should have been opened using mode 'wb'. The file objects
+    can also be sys.stdin or sys.stdout.
+
+    If a file name is used for either inout or output, the PSGio object
+    will open the appropriate file and also take care of closing the
+    opened file objects.
+
+    If a bytearray object is used then the PSGio object assumes the input
+    and ouput earrays are appropriately set up.
+
+    Methods generated runtime:
+
+    getb(...)
+        x.getb() -> str. Read annd returns a str on length 1.
+
+        Read a byte from an input source defined during the
+        instantiation of the PSGio object. The method is overloaded
+        accordingly during the initialization.
+
+        Args:
+            None.
+
+        Returns:
+            A value in range(0,255) and -1 if EOF.
+
+        Raises:
+            May raise IOError.
+
+    putb(...)
+        x.putb(value) -> None.
+  
+        Write a byte into an output destination defined during the
+        instantiation of the PSGio object. The method is overloaded
+        accordingly during the initialization.
+    
+        Args:
+            value (int): A value in range(0,255).
+
+        Returns:
+            None.
+
+        Raises:
+            IOError exception when a write fails or goes beyond
+            the bytearray bounds.
+
+            ValueError exception if the value is not in range(0,255).
+    """
+
     def __enter__(self):
+        """x.__enter__() -> self
+
+        Support for x using 'with' statement.
+        """
         return self
 
     def __exit__(self,exc_type, exc_val, exc_tb):
+        """x.__exit__(exc_type,exc_val,exc_tb) -> None.  
+        
+        Closes possible files objects opened by the PSGio object
+        itself for input and/or output purposes.
+        
+        Args:
+            exc_type
+            exc_val
+            exc_tb
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        
+        """
+
         if (self.ifile):
             self.ihndl.close()
         if (self.ofile):
             self.ohndl.close()
 
     def __init__(self, inp, oup):
+        """x.__init__(input,output) -> None.
+        
+        Initialized x; input and/or output is a file object, a file
+        name or a bytearray.
+
+        Args:
+            input (file, str or bytearray): A reference to a mode 'rb' opened
+                file object, filename to open or a bytearray object containing
+                the data to read,
+            output (file, str or bytearray): A reference to a mode 'wb' opened
+                file object, a filename to create or a bytearray object with
+                enough space to hold the output file.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
         self.ihndl = inp
         self.ohndl = oup
         self.iptr = 0
@@ -107,7 +204,12 @@ class PSGio(object):
     #
     #
     def close(self):
-       self.__exit__(None,None,None)
+        """x.close() -> None.
+
+        Closes possible files objects opened by the PSGio object
+        itself for input and/or output purposes.
+        """
+        self.__exit__(None,None,None)
 
 
     # returns one int between 0-255, -1 if EOF, or raises IOError if error
@@ -169,10 +271,19 @@ class PSGCompressor(object):
 
     def parseHeader(self):
         tag = b"PSG\x1a"
-        hdr = bytearray([self.io.getb() for n in xrange(16)])
+        #hdr = bytearray([self.io.getb() for n in xrange(16)])
+        #
+        #if (hdr.__len__() != 16):
+        #    raise IOError("File length too small.")
+        
+        hdr = bytearray(16)
 
-        if (hdr.__len__() != 16):
-            raise IOError("File length too small.")
+        for n in xrange(16):
+            b = self.io.getb()
+            if (b < 0):
+                raise IOError("Premature end of file")
+            else:
+                hdr[n] = b
 
         if (hdr[0:4] == tag[0:4]):
             return PSGHeader(tag,hdr[4],hdr[5],hdr[6:10])
@@ -268,13 +379,13 @@ class PSGCompressor(object):
             while numSync > 64:
                 self.io.putb(0b01111111)
                 if (args.debug):
-                    print "output: 01 111111"
+                    sys.stderr.write("output: 01 111111\n")
                 
                 numSync -= 64
             
             self.io.putb(0b01000000 | (numSync-1))
             if (args.debug):
-                print "output: 01 {:06b}".format(numSync-1)
+                sys.stderr.write("output: 01 {:06b}\n".format(numSync-1))
 
     #
     #
@@ -324,9 +435,11 @@ class PSGCompressor(object):
             if (used & (1 << (self.NUMREGS - 1 - n))):
                 self.io.putb(regs[n])
                 s += "{:02x} ".format(regs[n])
+        else:
+            s += "\n"
 
         if (args.debug):
-            print s
+            sys.stderr.write(s)
         
         return True
 
@@ -336,20 +449,10 @@ class PSGCompressor(object):
     #
     def outputEOF(self):
         if (args.debug):
-            print "output: 00 000000"
+            sys.stderr.write("output: 00 000000\n")
         
         self.io.putb(0x00)
 
-
-# 
-# PSG compressed format:
-#
-# 
-#  followed by reqister write value (1 octet) for each x=1
-#  starting from r0 -> r14
-
-
-#
 #
 #
 #
@@ -375,9 +478,9 @@ if __name__ == "__main__":
 
         if (hdr is not None):
             if (args.debug):
-                print hdr.tag
+                sys.stderr.write("{}\n".format(hdr.tag))
         else:
-            print "not a PSG file"
+            sys.stderr.write("not a PSG file\n")
             exit()
 
         cont = True
@@ -398,7 +501,7 @@ if __name__ == "__main__":
                 o = o + "{:02x} ".format(psg.regState[a])
             else:
                 if (args.debug):
-                    print o, w,psg.pendingFrameSync
+                    sys.stderr.write("{} {} {}\n".format(o,w,psg.pendingFrameSync))
 
             psg.outputFrames()
 
@@ -411,10 +514,15 @@ if __name__ == "__main__":
 #
 # 00 000000               -> EOF
 # 00 nnnnnn               -> regs 0 to 5 followed by 1 to 6 times [8]
-# 01 nnnnnn  -> wait sync & repeat previour line nnnnnn+1 times
-# 10 00nnnn               -> previous delta line 1-15, 0 is current
-# 10 01nnnn               -> register nnnn followed by 1 times [8]
-# 10 10rrrr               -> reserved
+# 01 nnnnnn               -> wait sync & repeat previour line nnnnnn+1 times
+# 10 00nnnn               -> play previous stored context from slot 1-15, 0 is current
+# 10 01nnnn               -> TODO: register nnnn followed by 1 times [8]
+# 10 10rrrr               -> TODO: store current context to slot 1-15
 # 10 11rrrr               -> reserved
 # 11 nnnnnn nnnnnnnn      -> regs 0 to 13 followed by 1 to 14 times [8]
 #
+# All commands except for EOF, 1001nnnn and 1010nnnn do on implicit frame sync.
+#
+#
+#
+
