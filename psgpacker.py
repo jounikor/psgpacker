@@ -416,7 +416,7 @@ class PSGCompressor(object):
             s = "output: 00 {:06b} ".format(used >> 8)
         elif (0):
             # can it be found from the history?
-            # 10 00nnnn
+            # 10 01nnnn
             pass
         elif (used & (used - 1) == 0):
             # only 1 bit set here..
@@ -424,8 +424,8 @@ class PSGCompressor(object):
             while not (used & (1 << (self.NUMREGS - 1 - n))):
                 n += 1
             
-            self.io.putb(0b10010000 | n)
-            s = "output: 10 01{:04b} ".format(n)
+            self.io.putb(0b10000000 | n)
+            s = "output: 10 00{:04b} ".format(n)
         else:
             self.io.putb(0b11000000 | (used >> 8))
             self.io.putb(used & 0xff)
@@ -515,8 +515,8 @@ if __name__ == "__main__":
 # 00 000000               -> EOF
 # 00 nnnnnn               -> regs 0 to 5 followed by 1 to 6 times [8]
 # 01 nnnnnn               -> wait sync & repeat previour line nnnnnn+1 times
-# 10 00nnnn               -> play previous stored context from slot 1-15, 0 is current
-# 10 01nnnn               -> TODO: register nnnn followed by 1 times [8]
+# 10 00nnnn               -> register nnnn followed by 1 times [8]
+# 10 01nnnn               -> TODO: play previous stored context from slot 1-15, 0 is current
 # 10 10rrrr               -> TODO: store current context to slot 1-15
 # 10 11rrrr               -> reserved
 # 11 nnnnnn nnnnnnnn      -> regs 0 to 13 followed by 1 to 14 times [8]

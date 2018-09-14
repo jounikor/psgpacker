@@ -10,7 +10,7 @@
 
 main:
         ld      hl,module
-        call    psgplayer+4
+        call    psgplayer+6
 
 loop:
         halt
@@ -32,7 +32,7 @@ loop:
         ;
         ld      a,1
         out     (254),a
-        call    psgplayer+6
+        call    psgplayer+4
         xor     a
         out     (254),a
 
@@ -50,15 +50,13 @@ loop:
 psgplayer:
         jr      _play   ; 0
         jr      _stop   ; 2
-        jr      _init   ; 4
-        jr      _next   ; 6
-
+        jr      _next   ; 4
+_init:                  ; 6
 
 ;
 ; Input:
 ;  HL = ptr to the packed PSG file.
 ;
-_init:  ;
         ld      (_mod),hl
         ld      (_pos),hl
         ld      hl,_wait
