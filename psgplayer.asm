@@ -40,11 +40,20 @@ loop:
 
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
+; To init player:
+;    LD   HL,packedPSG
+;    CALL plagplayer+6
 ;
+; To unpack a frame:
+;    CALL psgplayer+4 (variable cycles)
 ;
+; To update AY registers (cycle exact):
+;    CALL psgplayer+0
 ;
-;
+; To stop music:
+;    CALL psgplayer+2
 ;
 
 psgplayer:
@@ -58,15 +67,19 @@ _init:                  ; 6
 ;  HL = ptr to the packed PSG file.
 ;
         ld      (_mod),hl
+        ;
+
+_stop:
+; _stop also resets the current song position.
+;
+        xor     a
+        ld      hl,(_mod)
         ld      (_pos),hl
         ld      hl,_wait
-        xor     a
         ld      (hl),a
         ;
-_stop:  ;
         ld      hl,_regbuf
         ld      b,13
-        xor     a
 _clr:   ld      (hl),a
         inc     l
         djnz    _clr
@@ -147,7 +160,8 @@ _not_eof:
         ;
 _tag_00nnnnnn:
         ld      d,b
-        ld      bc,6<<8
+        ld      e,0
+        ld      b,6
         jr      _deltainit
         ;
 _not_00nnnnnn:
@@ -175,10 +189,10 @@ _not_01nnnnnn;
         ; Note that currently 1001nnnn, 1010rrrr and 1011rrrr are not even decoded as they
         ; cannot appear in the packed stream.
         xor     b
-        ld      c,a
-        ld      b,1
-        ld      d,00100000b
-        jr      _deltainit
+        ld      e,a
+        ld      d,HIGH(_regbuf)
+        ldi
+        jr      _exit0
         ;
 _not_10nnnnnn:
         ;
@@ -188,7 +202,7 @@ _not_10nnnnnn:
         ld      d,b
         ld      e,(hl)
         inc     hl
-        ld      bc,14<<8
+        ld      b,14
 _deltainit:
         push    de
         exx
@@ -197,8 +211,7 @@ _deltainit:
         add     hl,hl
         exx
         ;
-        ld      e,c
-        ld      d,HIGH(_regbuf)
+        ld      de,_regbuf
         ;
 _deltaloop:
         exx
@@ -212,6 +225,7 @@ _delta:
 _skip:
         inc     e
         djnz    _deltaloop
+_exit0:  
         xor     a
 _exit:  ;        
         ld      (_pos),hl
