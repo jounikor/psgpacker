@@ -184,7 +184,7 @@ _not_01nnnnnn;
         cp      10000000b
         jr nz,  _not_10nnnnnn
         ;
-        ; TAG 10 01 nnnn -> register nnnn followed by 1 [8]
+        ; TAG 10 00 nnnn -> register nnnn followed by 1 [8]
         ;
         ; Note that currently 1001nnnn, 1010rrrr and 1011rrrr are not even decoded as they
         ; cannot appear in the packed stream.
