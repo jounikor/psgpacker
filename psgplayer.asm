@@ -170,7 +170,7 @@ _not_eof:
         ret                     ; counts as one..
         ;
 _tag_0100nnnn:
-        ; TAG 01 nnnnnn
+        ; TAG 01 00nnnn + [8]
         ;
         and     00001111b
         ld      e,a
@@ -251,16 +251,8 @@ _regbuf:
 
 ;
 ;
-;
-;
-;
-
 module:
         incbin  "q.bin"
-
-
-
-
 
         END main
 
