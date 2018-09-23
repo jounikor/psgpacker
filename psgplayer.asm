@@ -1,7 +1,7 @@
 ;
 ; (c) 2018 Jouni Korhonen
 ;
-; PSGPlayer v0.1 - to be modified big time
+; PSGPlayer v0.2 - to be modified big time
 ;
 
 
@@ -37,7 +37,6 @@ loop:
         out     (254),a
 
         jr      loop
-
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -131,16 +130,23 @@ _next:  ;
         ld      a,(_wait)
         dec     a
         ld      (_wait),a
-        ret     p
+        ret p
         ;
         ; I am not sure the below is actually needed.. the intention is not to
         ; Change envelope shape/cycle register if there is no change in the
         ; register output either..
         ;
-        ld      a,$ff
         ld      (_regbuf+13),a
         ;
         ld      hl,(_pos)
+        call    _gettags
+        ;
+        ld      (_pos),hl
+        ld      (_wait),a
+        ret
+
+        ;
+_gettags:
         ld      a,(hl)
         and     a
         jr nz,  _not_eof
@@ -148,62 +154,65 @@ _next:  ;
         ; TAG 00 00000 -> eof
         ;
         ld      hl,(_mod)
-        ld      a,(hl)
+        add     a,(hl)          ; ADD sets flags again..
+        ;
 _not_eof:
         inc     hl
-        ld      b,a
-        and     11000000b
-        jr nz,  _not_00nnnnnn
+        jp m,   _tag_1xnnnnnn
         ;
-        ; TAG 00 000001 -> 00 111111 -> regs 0 to 5 + number of nnnnnn bits * [8]
-        ;   reg  012345
+        ; TAG 01 00nnnn + [8]
+        ;     00 nnnnnn  
         ;
-_tag_00nnnnnn:
-        ld      d,b
-        ld      e,0
-        ld      b,6
-        jr      _deltainit
-        ;
-_not_00nnnnnn:
-        ;
-        ; TAGs 01 nnnnnn  -> sync + repeat previous regs buffer nnnnnn+1 times
-        ;      10 00 nnnn -> register nnnn followed by 1 times [8]
-        ;      10 01 nnnn -> reserved (previous stored regs buffer 1-15, 0 is current)
-        ;      10 10 rrrr -> reserved
-        ;      10 11 rrrr -> reserved
-
+        ; Return if TAG 00 nnnnnn
         cp      01000000b
-        jr nz,  _not_01nnnnnn
+        jr nc,  _tag_0100nnnn
+        dec     a               ; Decrement one wait since wait itself
+        ret                     ; counts as one..
         ;
+_tag_0100nnnn:
         ; TAG 01 nnnnnn
         ;
-        xor     b
-        jr      _exit
-        ;
-_not_01nnnnnn;
-        cp      10000000b
-        jr nz,  _not_10nnnnnn
-        ;
-        ; TAG 10 01 nnnn -> register nnnn followed by 1 [8]
-        ;
-        ; Note that currently 1001nnnn, 1010rrrr and 1011rrrr are not even decoded as they
-        ; cannot appear in the packed stream.
-        xor     b
+        and     00001111b
         ld      e,a
         ld      d,HIGH(_regbuf)
         ldi
-        jr      _exit0
+        xor     a
+        ret
+_tag_1xnnnnnn:
         ;
-_not_10nnnnnn:
+        ; TAGs 11 nnnnnn nnnnnnnn  -> array of [8] for registers
+        ;      10 nnnnnn nnnnnnnn  -> LZ from history
+        ;
+
+        cp      11000000b
+        jr nc,  _tag_11nnnnnn
+        
+        ;
+        ; TAG 10 nnnnnn nnnnnnnn
+        ;
+        and     00111111b           ; Clears C-Flags, important!
+        ld      b,a
+        ld      c,(hl)
+        inc     hl
+        push    hl
+        sbc     hl,bc
+        ld      d,(hl)
+        inc     hl
+        call    _lz_skip
+        pop     hl
+        ret
+        ;
+_tag_11nnnnnn:
         ;
         ; TAG 11 nnnnnn nnnnnnnn
         ;   reg  012345 6789abcd
         ;
-        ld      d,b
+        ld      d,a
+_lz_skip:
         ld      e,(hl)
         inc     hl
         ld      b,14
-_deltainit:
+        ;
         push    de
         exx
         pop     hl
@@ -225,12 +234,9 @@ _delta:
 _skip:
         inc     e
         djnz    _deltaloop
-_exit0:  
         xor     a
-_exit:  ;        
-        ld      (_pos),hl
-        ld      (_wait),a
         ret
+
 
 ;
 ;
@@ -250,7 +256,7 @@ _regbuf:
 ;
 
 module:
-        incbin  "o.bin"
+        incbin  "q.bin"
 
 
 

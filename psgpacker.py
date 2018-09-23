@@ -1,6 +1,6 @@
 #
 # (c) 2018 by Jouni 'Mr.Spiv' Korhonen
-# version 0.1
+# version 0.2
 #
 #
 # This is free and unencumbered software released into the public domain.
@@ -250,6 +250,10 @@ class PSGio(object):
         self.optr += 1
 
 
+    # return outputted bytes
+    def len(self):
+        return self.optr
+
 #
 #
 #
@@ -264,6 +268,7 @@ class PSGCompressor(object):
         self.regState = bytearray(PSGCompressor.NUMREGS)
 
         self.regList = []
+        self.history = {}
         self.numSync = 0
 
         for n in xrange(PSGCompressor.NUMREGS):
@@ -375,17 +380,18 @@ class PSGCompressor(object):
     #
     def _outputSyncTokens(self,numSync):
         # output 0 or more sync waits
+
         if (numSync > 0):
-            while numSync > 64:
-                self.io.putb(0b01111111)
+            while numSync > 63:
+                self.io.putb(0b00111111)
                 if (args.debug):
-                    sys.stderr.write("output: 01 111111\n")
+                    sys.stderr.write("  wait: 00 111111\n")
                 
-                numSync -= 64
+                numSync -= 63
             
-            self.io.putb(0b01000000 | (numSync-1))
+            self.io.putb(0b00000000 | (numSync))
             if (args.debug):
-                sys.stderr.write("output: 01 {:06b}\n".format(numSync-1))
+                sys.stderr.write("  wait: 00 {:06b}\n".format(numSync))
 
     #
     #
@@ -393,13 +399,12 @@ class PSGCompressor(object):
     def outputFrames(self):
         used = self.used
         numSync = self.numSync
-        regs = self.regState
 
         if (self.numSync == 0):
             raise AssertionError(self.numSync)
       
         if (used > 0):
-            # If there are changes in the register list we need to subtract ine
+            # If there are changes in the register list we need to subtract one
             # sync wait since the register update implicitly contains a sync
             # wait itself..
             numSync = numSync - 1
@@ -410,39 +415,70 @@ class PSGCompressor(object):
         if (used == 0):
             return False
 
-        # now output the register lists.. check for the pitch output..
-        if (((used & 0b0011111100000000) ^ used) == 0):
-            self.io.putb(used>>8)
-            s = "output: 00 {:06b} ".format(used >> 8)
-        elif (0):
-            # can it be found from the history?
-            # 10 01nnnn
-            pass
-        elif (used & (used - 1) == 0):
+        if (used & (used - 1) == 0):
             # only 1 bit set here..
             n = 0
             while not (used & (1 << (self.NUMREGS - 1 - n))):
                 n += 1
             
-            self.io.putb(0b10000000 | n)
-            s = "output: 10 00{:04b} ".format(n)
+            self.io.putb(0b01000000 | n)
+            self.io.putb(self.regState[n])
+            
+            s = "oneput: 01 00{:04b} {:02x}\n".format(n,self.regState[n])
         else:
-            self.io.putb(0b11000000 | (used >> 8))
-            self.io.putb(used & 0xff)
-            s = "output: 11 {:014b} ".format(used) 
+            regs  = chr(0b11000000 | (used >> 8))
+            regs += chr(used & 0xff)
+            s = "{:5d} - regput: 11 {:014b} ".format(self.io.len(),used) 
        
-        for n in xrange(self.NUMREGS):
-            if (used & (1 << (self.NUMREGS - 1 - n))):
-                self.io.putb(regs[n])
-                s += "{:02x} ".format(regs[n])
-        else:
-            s += "\n"
+            for n in xrange(self.NUMREGS):
+                if (used & (1 << (self.NUMREGS - 1 - n))):
+                    regs += chr(self.regState[n])
+                    s += "{:02x} ".format(self.regState[n])
+            else:
+                s += "\n"
+       
+            if (args.lz):
+                regs,s = self.checkHistory(regs,s)
+
+            for n in regs:
+                self.io.putb(ord(n))
+
+        #
+        #
 
         if (args.debug):
             sys.stderr.write(s)
         
         return True
 
+    #
+    #
+    #
+
+    def checkHistory(self,regs,s):
+        if (regs.__len__() < 3):
+            return regs,s
+      
+        if (self.history.has_key(regs)):
+            pos = self.history[regs]
+        else:
+            pos = -1
+
+        if (pos == -1):
+            self.history[regs] = self.io.len()
+            return regs,s
+
+        dis = self.io.len() - pos + 2
+        # +2 compensates increment of 2 in the depacker..
+        
+        if (dis < 2**14):
+            regs  = chr(0b10000000 | (dis >> 8))
+            regs += chr(dis & 0xff)
+            s = "{:5d} - lz: 10 {:014b} ({})\n".format(self.io.len(),dis,dis-2)
+        else:
+            self.history[regs] = self.io.len()
+
+        return regs,s
         
     #
     #
@@ -462,7 +498,8 @@ prs = argparse.ArgumentParser()
 prs.add_argument("input_file",metavar="input_file",type=str,help="PSG file or '' if stdin")
 prs.add_argument("output_file",metavar="output_file",type=str,nargs="?",help="Output file or stdout "
                  "if missing", default=sys.stdout)
-prs.add_argument("--debug","-d",dest="debug",action="store_true",default=False,help="show debug output")
+prs.add_argument("--debug",dest="debug",action="store_true",default=False,help="show debug output")
+prs.add_argument("--lz",dest="lz",action="store_true",default=False,help="enable history references")
 args = prs.parse_args()
 
 if __name__ == "__main__":
@@ -513,16 +550,11 @@ if __name__ == "__main__":
 #
 #
 # 00 000000               -> EOF
-# 00 nnnnnn               -> regs 0 to 5 followed by 1 to 6 times [8]
-# 01 nnnnnn               -> wait sync & repeat previour line nnnnnn+1 times
-# 10 00nnnn               -> register nnnn followed by 1 times [8]
-# 10 01nnnn               -> TODO: play previous stored context from slot 1-15, 0 is current
-# 10 10rrrr               -> TODO: store current context to slot 1-15
-# 10 11rrrr               -> reserved
+# 00 nnnnnn               -> wait sync & repeat previour line nnnnnn+1 times
+# 01 00nnnn               -> register nnnn followed by 1 times [8]
+# 10 nnnnnn nnnnnnnn      -> look up to 2^14-1 bytes in history for a TAG line..
 # 11 nnnnnn nnnnnnnn      -> regs 0 to 13 followed by 1 to 14 times [8]
 #
 # All commands except for EOF, 1001nnnn and 1010nnnn do on implicit frame sync.
-#
-#
 #
 
