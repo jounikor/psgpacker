@@ -92,7 +92,7 @@ _clr:   ld      (hl),a
 ; Called every frame refresh in a position that needs cycle exact timing.
 ; The subroutine outputs the register delta buffer into the AY registers.
 ;
-; Total 543 cycles
+; Total 540 cycles
 ;
 _play:  ;
         ld      de,$bfff    ; 10
@@ -108,7 +108,7 @@ _play:  ;
         out     (c),l       ; 12
         ld      b,d         ;  4
         ld      a,(hl)      ;  7
-        cp      $ff         ;  7 -> 60+13*35
+        cp      e           ;  4 -> 57+13*35
         ;
         jr z,   _nops       ; 12 if jr, 5 if pass through
         ;
@@ -129,8 +129,7 @@ _nops:
 _next:  ;
         ld      a,(_wait)
         dec     a
-        ld      (_wait),a
-        ret p
+        jp p,   _exit
         ;
         ; I am not sure the below is actually needed.. the intention is not to
         ; Change envelope shape/cycle register if there is no change in the
@@ -140,8 +139,8 @@ _next:  ;
         ;
         ld      hl,(_pos)
         call    _gettags
-        ;
         ld      (_pos),hl
+_exit:
         ld      (_wait),a
         ret
 
@@ -154,7 +153,7 @@ _gettags:
         ; TAG 00 00000 -> eof
         ;
         ld      hl,(_mod)
-        add     a,(hl)          ; ADD sets flags again..
+        ret
         ;
 _not_eof:
         inc     hl

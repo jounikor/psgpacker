@@ -552,9 +552,7 @@ if __name__ == "__main__":
 # 00 000000               -> EOF
 # 00 nnnnnn               -> wait sync & repeat previour line nnnnnn times
 # 01 00nnnn               -> register nnnn followed by 1 times [8]
-# 10 nnnnnn nnnnnnnn      -> look up to 2^14-1 bytes in history for a TAG line..
+# 10 nnnnnn nnnnnnnn      -> point at 2^14-1 bytes in history for a TAG "11 nnnnnn nnnnnnnn"
 # 11 nnnnnn nnnnnnnn      -> regs 0 to 13 followed by 1 to 14 times [8]
-#
-# All commands except for EOF, 1001nnnn and 1010nnnn do on implicit frame sync.
 #
 
