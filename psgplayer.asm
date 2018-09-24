@@ -43,7 +43,7 @@ loop:
 ;
 ; To init player:
 ;    LD   HL,packedPSG
-;    CALL plagplayer+6
+;    CALL psgplayer+6
 ;
 ; To unpack a frame:
 ;    CALL psgplayer+4 (variable cycles)
@@ -129,23 +129,20 @@ _nops:
 _next:  ;
         ld      a,(_wait)
         dec     a
-        jp p,   _exit
+        ld      hl,(_pos)
+        call m, _gettags
+        ld      (_pos),hl
+        ld      (_wait),a
+        ret
+
         ;
+_gettags:
         ; I am not sure the below is actually needed.. the intention is not to
         ; Change envelope shape/cycle register if there is no change in the
         ; register output either..
         ;
         ld      (_regbuf+13),a
         ;
-        ld      hl,(_pos)
-        call    _gettags
-        ld      (_pos),hl
-_exit:
-        ld      (_wait),a
-        ret
-
-        ;
-_gettags:
         ld      a,(hl)
         and     a
         jr nz,  _not_eof
@@ -158,9 +155,6 @@ _gettags:
 _not_eof:
         inc     hl
         jp m,   _tag_1xnnnnnn
-        ;
-        ; TAG 01 00nnnn + [8]
-        ;     00 nnnnnn  
         ;
         ; Return if TAG 00 nnnnnn
         cp      01000000b
@@ -182,10 +176,8 @@ _tag_1xnnnnnn:
         ; TAGs 11 nnnnnn nnnnnnnn  -> array of [8] for registers
         ;      10 nnnnnn nnnnnnnn  -> LZ from history
         ;
-
         cp      11000000b
         jr nc,  _tag_11nnnnnn
-        
         ;
         ; TAG 10 nnnnnn nnnnnnnn
         ;
@@ -195,9 +187,9 @@ _tag_1xnnnnnn:
         inc     hl
         push    hl
         sbc     hl,bc
-        ld      d,(hl)
+        ld      a,(hl)
         inc     hl
-        call    _lz_skip
+        call    _tag_11nnnnnn
         pop     hl
         ret
         ;
@@ -206,34 +198,32 @@ _tag_11nnnnnn:
         ; TAG 11 nnnnnn nnnnnnnn
         ;   reg  012345 6789abcd
         ;
-        ld      d,a
-_lz_skip:
-        ld      e,(hl)
+        ld      c,a         ; C > 14 always..
+        ld      b,(hl)
         inc     hl
-        ld      b,14
-        ;
-        push    de
-        exx
-        pop     hl
-        add     hl,hl
-        add     hl,hl
-        exx
-        ;
+        add     a,a
+        add     a,a
         ld      de,_regbuf
-        ;
-_deltaloop:
-        exx
-        add     hl,hl
-        exx
-        jr nc,  _skip
-_delta:
-        ld      a,(hl)
-        ld      (de),a
-        inc     hl
-_skip:
+        
+        REPT    6
+        add     a,a
+        jr nc,  $+5
+        ldi
+        db      $fe
         inc     e
-        djnz    _deltaloop
-        xor     a
+        ENDM
+        ld      a,b
+        REPT    7
+        add     a,a
+        jr nc,  $+5
+        ldi
+        db      $fe
+        inc     e
+        ENDM
+        add     a,a
+        ret nc
+        ldi
+        ;                   ; A = 0
         ret
 
 
