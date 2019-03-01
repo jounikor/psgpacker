@@ -1,7 +1,7 @@
 ;
-; (c) 2018 Jouni Korhonen
+; (c) 2018-19 Jouni Korhonen
 ;
-; PSGPlayer v0.2 - to be modified big time
+; PSGPlayer v0.4a
 ;
 
 
@@ -17,7 +17,7 @@ loop:
 
         xor     a
         out     (254),a
-        ld      c,8
+        ld      c,3
 .wait1:
         ld      b,0
 .wait2:
@@ -53,6 +53,7 @@ loop:
 ;
 ; To stop music:
 ;    CALL psgplayer+2
+;    CALL psgplayer+0
 ;
 
 psgplayer:
@@ -71,28 +72,30 @@ _init:                  ; 6
 _stop:
 ; _stop also resets the current song position.
 ;
-        xor     a
-        ld      hl,(_mod)
-        ld      (_pos),hl
-        ld      hl,_wait
-        ld      (hl),a
         ;
-        ld      hl,_regbuf
+        xor     a
+        ld      hl,_regbuf+13
+        ld      (hl),$ff
+ 
         ld      b,13
-_clr:   ld      (hl),a
-        inc     l
+_clr:   dec     l
+        ld      (hl),a
         djnz    _clr
         ;
-        cpl
-        ld      (hl),a
+        ld      (_wait),a
+        ld      hl,(_mod)
+        ld      (_pos),hl
         ;
-
+        ; At exit A=0 and HL=mod
+        ;
+        ret
+        ;
 
 ;
 ; Called every frame refresh in a position that needs cycle exact timing.
 ; The subroutine outputs the register delta buffer into the AY registers.
 ;
-; Total 540 cycles
+; Total 560 cycles
 ;
 _play:  ;
         ld      de,$bfff    ; 10
@@ -102,12 +105,13 @@ _play:  ;
         REPT    13
         out     (c),l       ; 12 OUT L to $fffd -> select
         ld      b,d         ;  4
-        outi                ; 15 OUT (HL) to $bffd -> value
+        outi                ; 16 OUT (HL) to $bffd -> value
         ld      b,e         ;  4
         ENDM
         out     (c),l       ; 12
         ld      b,d         ;  4
         ld      a,(hl)      ;  7
+        ld      (hl),e      ;  7
         cp      e           ;  4 -> 57+13*35
         ;
         jr z,   _nops       ; 12 if jr, 5 if pass through
@@ -137,20 +141,12 @@ _next:  ;
 
         ;
 _gettags:
-        ; I am not sure the below is actually needed.. the intention is not to
-        ; Change envelope shape/cycle register if there is no change in the
-        ; register output either..
-        ;
-        ld      (_regbuf+13),a
-        ;
         ld      a,(hl)
         and     a
-        jr nz,  _not_eof
         ;
         ; TAG 00 00000 -> eof
         ;
-        ld      hl,(_mod)
-        ret
+        jp z,   _stop
         ;
 _not_eof:
         inc     hl
@@ -158,17 +154,37 @@ _not_eof:
         ;
         ; Return if TAG 00 nnnnnn
         cp      01000000b
-        jr nc,  _tag_0100nnnn
+        jr nc,  _tag_01rrnnnn
         dec     a               ; Decrement one wait since wait itself
-        ret                     ; counts as one..
+        ret                     ; counts as one frame..
         ;
-_tag_0100nnnn:
-        ; TAG 01 00nnnn + [8]
-        ;
-        and     00001111b
-        ld      e,a
+_tag_01rrnnnn:
+        and     00111111b
         ld      d,HIGH(_regbuf)
+        ld      e,a
+        cp      16
+        jr c,   _oneput
+_lutput:
+        ; TAG 01 rrnnnn
+        and     00001111b
+        ld      c,a
+        ld      a,(de)
+        ld      e,c
+        ld      (de),a
+        xor     a
+        ret
+_oneput:
+        ; TAG 01 00nnnn + [8]
+        push    de
+        pop     ix
+        ld      a,(hl)
         ldi
+        ;
+        ld      c,(ix+32)
+        ld      (ix+16),c
+        ld      c,(ix+48)
+        ld      (ix+32),c
+        ld      (ix+48),a
         xor     a
         ret
 _tag_1xnnnnnn:
@@ -233,15 +249,17 @@ _mod:   dw      0           ; PSG song initial position
 _pos:   dw      0           ; PSG song position..
 _wait:  db      0
 
-        org     ($+255) & 0xff00    ; Aligh to 256 bytes
+        org     ($+255) & 0xff00    ; Align to 256 bytes
 _regbuf:
-        ds      14
+_lut:
+        ds      14+2
+        ds      48
 
 
 ;
 ;
 module:
-        incbin  "q.bin"
+        incbin  "p.psg"
 
         END main
 

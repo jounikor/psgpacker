@@ -1,6 +1,6 @@
 #
-# (c) 2018 by Jouni 'Mr.Spiv' Korhonen
-# version 0.2
+# (c) 2018-19 by Jouni 'Mr.Spiv' Korhonen
+# version 0.6
 #
 #
 # This is free and unencumbered software released into the public domain.
@@ -254,6 +254,10 @@ class PSGio(object):
     def len(self):
         return self.optr
 
+    def read(self):
+        return self.iptr
+
+
 #
 #
 #
@@ -261,26 +265,31 @@ class PSGio(object):
 
 class PSGCompressor(object):
     NUMREGS = 14
+    LUTSIZE = 48
     
     def __init__(self, io):
         self.io = io
-        self.pendingFrameSync = 0
-        self.regState = bytearray(PSGCompressor.NUMREGS)
-
         self.regList = []
         self.history = {}
         self.numSync = 0
+        self.numPrevSync = 0
+        self.lut = [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+                    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+                    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+                    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+                    ]
+        self.lutIndex = 0
+        self.regBuffer = bytearray(14)
 
-        for n in xrange(PSGCompressor.NUMREGS):
-            self.regState[n] = 0
+        for n in xrange(14):
+            self.regBuffer[n] = 0
+
+    #
+    # Parse a PSG1 style file with 16 octet header..
+    #
 
     def parseHeader(self):
         tag = b"PSG\x1a"
-        #hdr = bytearray([self.io.getb() for n in xrange(16)])
-        #
-        #if (hdr.__len__() != 16):
-        #    raise IOError("File length too small.")
-        
         hdr = bytearray(16)
 
         for n in xrange(16):
@@ -296,120 +305,131 @@ class PSGCompressor(object):
             return None
 
     #
+    # Parse a PSG frame..
     #
-    #
+
     def parseFrames(self):
         self.regList = []
-        self.numSync = self.pendingFrameSync
-        byteRead = False
+        self.numSync = self.numPrevSync
+        self.numPrevSync = 0
 
-        while True:
-            if (byteRead is False):
-                t = self.io.getb()
+        if (args.debug):
+            sys.stderr.write("Parsing at {:5x}\n".format(self.io.read()))
 
-                if (t == -1):
-                    return False
-           
+        while (True):
+            t = self.io.getb()
+
+            if (t == -1):
+                return False
+
             if (t == 0xff):
-                if (byteRead is True):
-                    self.pendingFrameSync = 1
-                    return True
-                else:
-                    self.numSync += 1
-                    continue
+                # found empty frame..
+                self.numSync += 1
+                continue
 
             if (t == 0xfe):
+                # found several empty frames..
                 v = self.io.getb()
                 
                 if (v == -1):
-                    return False
-                
-                if (byteRead is True):
-                    self.pendingFrameSync = v
-                    return True
-                else:
-                    self.numSync += v
-                    continue
+                    raise RuntimeError("Premature end of file #1")
+               
+                self.numSync = self.numSync +  4 * v
+                continue
             
             if (t == 0xfd):
-                    return False
+                # end of file..
+                return False
+            
+            # it was a register write..
 
             while (True):
+                if (t >= 16 and t < 252):
+                    raise NotImplementedError("Outing to MSX devices")
+                
                 # Read register index + value or possible end mark
+                
                 v = self.io.getb()
             
                 if (v == -1):
-                    self.pendingFrameSync = 0
-                    return False
+                    raise RuntimeError("Premature end of file #2")
                 
-                if (t >= 16 and t < 252):
-                    raise NotImplementedError("Outing to MSX devices")
-                else:
-                    self.regList.append( (t,v) )
-
+                self.regList.append( (t,v) )
                 t = self.io.getb()
                  
                 if (t == -1):
                     return False
 
-                if (t == 0xff or t == 0xfe):
-                    byteRead = True
-                    break
+                if (t == 0xff):
+                    self.numPrevSync = 1
+                    return True
+
+                if (t == 0xfe):
+                    t = self.io.getb()
+
+                    if (t == -1):
+                        raise RuntimeError("Premature end of file #3")
+                    
+                    if (t == 0):
+                        raise RuntimeError("Multiple end of frames is zero")
+                    
+                    self.numPrevSync = t * 4
+                    return True
 
     #
+    # Calculate "used registers" bitmap and also update the
+    # internal PSG register buffer only with values that
+    # change the buffer state.
+    # Also store the last change register index for "oneput" use.
     #
-    #
+
     def update(self):
         self.used = 0
+        self.only = -1
 
         for reg,val in self.regList:
-            if (self.regState[reg] != val):
+            if (self.regBuffer[reg] != val):
                 self.used = self.used | (1 << (self.NUMREGS - 1 - reg))
-                self.regState[reg] = val
+                self.regBuffer[reg] = val
+                self.only = reg
 
-        return self.numSync,self.used
-
-    #
-    #
-    #
-    def updateDeltaZero(self):
-        self.pendingFrameSync += self.numSync
+        return self.used
 
     #
+    # Output "end of interrupt" marks i.e. frame waits.
+    # In a case of "last frame" possible tailing waits
+    # from the parser are also included into outputted
+    # frame waits.
     #
-    #
-    def _outputSyncTokens(self,numSync):
-        # output 0 or more sync waits
+
+    def outputSyncTokens(self,lastFrame):
+        numSync = self.numSync
+
+        if (lastFrame):
+            numSync += self.numPrevSync
 
         if (numSync > 0):
-            while numSync > 63:
+            numSync -= 1
+
+            while (numSync > 63):
                 self.io.putb(0b00111111)
                 if (args.debug):
                     sys.stderr.write("  wait: 00 111111\n")
                 
                 numSync -= 63
             
-            self.io.putb(0b00000000 | (numSync))
-            if (args.debug):
-                sys.stderr.write("  wait: 00 {:06b}\n".format(numSync))
+            if (numSync > 0):
+                self.io.putb(0b00000000 | (numSync))
+            
+                if (args.debug):
+                    sys.stderr.write("  wait: 00 {:06b}\n".format(numSync))
+    
+    #
+    # Output PSG data in compressed form.
+    #
 
-    #
-    #
-    #
     def outputFrames(self):
         used = self.used
-        numSync = self.numSync
-
-        if (self.numSync == 0):
-            raise AssertionError(self.numSync)
-      
-        if (used > 0):
-            # If there are changes in the register list we need to subtract one
-            # sync wait since the register update implicitly contains a sync
-            # wait itself..
-            numSync = numSync - 1
-
-        self._outputSyncTokens(numSync)
 
         # output 0 or 1 reglists
         if (used == 0):
@@ -417,72 +437,118 @@ class PSGCompressor(object):
 
         if (used & (used - 1) == 0):
             # only 1 bit set here..
-            n = 0
-            while not (used & (1 << (self.NUMREGS - 1 - n))):
-                n += 1
-            
+          
+            n = self.only
+            m = self.regBuffer[n]
+
+            if (args.lut):
+                n = self.checkLUT(n,m)
+        
             self.io.putb(0b01000000 | n)
-            self.io.putb(self.regState[n])
+           
+            if (n < 16):
+                self.io.putb(m)
+                s = "oneput: 01 00{:04b} {:02x}".format(self.io.len(),n,m)
+            else:
+                s = "lutput: 01 {:06b} -> {:02x}".format(self.io.len(),n,m)
+        
+            if (args.debug):
+                ss = "{:5d} - {:s} : {:d},{:d}\n".format(self.io.len(),s,\
+                        self.numSync,self.numPrevSync)
+                sys.stderr.write(ss)
             
-            s = "oneput: 01 00{:04b} {:02x}\n".format(n,self.regState[n])
+            return True
+        
+        # .. 
+
+        dis = -1
+
+        # condense a key for lookups
+        key = ""
+
+        for n in xrange(self.NUMREGS):
+            if (used & (1 << (self.NUMREGS - 1- n))):
+                key += chr(n)
+                key += chr(self.regBuffer[n])
+
+        if (args.lz):
+            dis = self.checkHistory(key)
+
+        if (dis >= 0):
+            regs = chr(0b10000000 | (dis >> 8))
+            regs += chr(dis & 0xff)
+            s = "lz: 10 {:06b}{:08b} -> {:d}".format(dis>>8,dis&0xff,dis-2)
         else:
+            s = "regput: 11 {:014b} ".format(used)
             regs  = chr(0b11000000 | (used >> 8))
             regs += chr(used & 0xff)
-            s = "{:5d} - regput: 11 {:014b} ".format(self.io.len(),used) 
-       
-            for n in xrange(self.NUMREGS):
-                if (used & (1 << (self.NUMREGS - 1 - n))):
-                    regs += chr(self.regState[n])
-                    s += "{:02x} ".format(self.regState[n])
-            else:
-                s += "\n"
-       
-            if (args.lz):
-                regs,s = self.checkHistory(regs,s)
+        
+            for n in xrange(1,key.__len__(),2):
+                regs += key[n]
+                s += "{:02x} ".format(ord(key[n]))
 
-            for n in regs:
-                self.io.putb(ord(n))
+        for n in regs:
+            self.io.putb(ord(n))
 
         #
-        #
-
         if (args.debug):
-            sys.stderr.write(s)
+            ss = "{:5d} - {:s} : {:d},{:d}\n".format(self.io.len(),s,\
+                    self.numSync,self.numPrevSync)
+            sys.stderr.write(ss)
         
         return True
 
     #
+    # Check it the register data is available in the LUT
+    # buffer.. also update the buffer in a FIFO manner if
+    # the regoster value was not found.
+    # 3 LUT positions are maintained for each register.
     #
+    
+    def checkLUT(self,n,r):
+        if (r == self.lut[n+16]):
+            return n+16
+        if (r == self.lut[n+32]):
+            return n+32
+        if (r == self.lut[n+48]):
+            return n+48
+
+        self.lut[n+16] = self.lut[n+32]
+        self.lut[n+32] = self.lut[n+48]
+        self.lut[n+48] = r
+        return n
+
+    #
+    # Check if the regiter+value array has already been
+    # seen in past. The history is maintained for past
+    # 16382 locations in the file. 2 byte adjustment is
+    # done in the distance from the current location to the
+    # history to speed up the decompression routine.
     #
 
-    def checkHistory(self,regs,s):
-        if (regs.__len__() < 3):
-            return regs,s
-      
-        if (self.history.has_key(regs)):
-            pos = self.history[regs]
+    def checkHistory(self,key):
+        if (self.history.has_key(key)):
+            pos = self.history[key]
         else:
             pos = -1
 
         if (pos == -1):
-            self.history[regs] = self.io.len()
-            return regs,s
+            self.history[key] = self.io.len()
+            return -1
 
-        dis = self.io.len() - pos + 2
         # +2 compensates increment of 2 in the depacker..
+        dis = self.io.len() - pos  + 2
         
-        if (dis < 2**14):
-            regs  = chr(0b10000000 | (dis >> 8))
-            regs += chr(dis & 0xff)
-            s = "{:5d} - lz: 10 {:014b} ({})\n".format(self.io.len(),dis,dis-2)
-        else:
-            self.history[regs] = self.io.len()
+        if (dis >= 2**14):
+            self.history[key] = self.io.len()
+            dis = -1
 
-        return regs,s
+        return dis
         
     #
     #
     #
+    
     def outputEOF(self):
         if (args.debug):
             sys.stderr.write("output: 00 000000\n")
@@ -500,6 +566,8 @@ prs.add_argument("output_file",metavar="output_file",type=str,nargs="?",help="Ou
                  "if missing", default=sys.stdout)
 prs.add_argument("--debug",dest="debug",action="store_true",default=False,help="show debug output")
 prs.add_argument("--lz",dest="lz",action="store_true",default=False,help="enable history references")
+prs.add_argument("--lut",dest="lut",action="store_true",default=False,help="enable rotating "
+    "lookup tables")
 args = prs.parse_args()
 
 if __name__ == "__main__":
@@ -522,29 +590,20 @@ if __name__ == "__main__":
 
         cont = True
 
-        while cont:
+        while (cont):
             cont = psg.parseFrames()
-            w,u = psg.update()
+            used = psg.update()
 
             #
-            if (u == 0x000):
-                # if there is no change to the previous frame treat it as
-                # another sync mark..
-                psg.updateDeltaZero()
-                continue
+            if (cont and used == 0x0000):
+                raise RuntimeError( "Spurious empty frame - check the PSG file")
 
-            o = "{:04x} ".format(u)
-            for a in xrange(PSGCompressor.NUMREGS):
-                o = o + "{:02x} ".format(psg.regState[a])
-            else:
-                if (args.debug):
-                    sys.stderr.write("{} {} {}\n".format(o,w,psg.pendingFrameSync))
-
+            psg.outputSyncTokens(False)
             psg.outputFrames()
 
         #
 
-        psg.outputFrames()
+        psg.outputSyncTokens(True)
         psg.outputEOF()
 
 #
@@ -552,6 +611,7 @@ if __name__ == "__main__":
 # 00 000000               -> EOF
 # 00 nnnnnn               -> wait sync & repeat previour line nnnnnn times
 # 01 00nnnn               -> register nnnn followed by 1 times [8]
+# 01 rrnnnn               -> if rr > 0 then take register from LUT[rrnnnn]
 # 10 nnnnnn nnnnnnnn      -> point at 2^14-1 bytes in history for a TAG "11 nnnnnn nnnnnnnn"
 # 11 nnnnnn nnnnnnnn      -> regs 0 to 13 followed by 1 to 14 times [8]
 #
