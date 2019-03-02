@@ -266,6 +266,7 @@ class PSGio(object):
 class PSGCompressor(object):
     NUMREGS = 14
     LUTSIZE = 48
+    LUTTOTAL = 64
     
     def __init__(self, io):
         self.io = io
@@ -273,15 +274,11 @@ class PSGCompressor(object):
         self.history = {}
         self.numSync = 0
         self.numPrevSync = 0
-        self.lut = [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-                    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-                    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-                    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
-                    ]
+        self.lut = bytearray(self.LUTTOTAL)
         self.lutIndex = 0
-        self.regBuffer = bytearray(14)
+        self.regBuffer = bytearray(self.NUMREGS)
 
-        for n in xrange(14):
+        for n in xrange(self.NUMREGS):
             self.regBuffer[n] = 0
 
     #
@@ -310,11 +307,12 @@ class PSGCompressor(object):
 
     def parseFrames(self):
         self.regList = []
-        self.numSync = self.numPrevSync
+        self.numSync += self.numPrevSync
         self.numPrevSync = 0
 
         if (args.debug):
-            sys.stderr.write("Parsing at {:5x}\n".format(self.io.read()))
+            sys.stderr.write("Parsing at {:5x}, numSync: {:d}\n".\
+                format(self.io.read(),self.numSync))
 
         while (True):
             t = self.io.getb()
@@ -404,6 +402,7 @@ class PSGCompressor(object):
 
     def outputSyncTokens(self,lastFrame):
         numSync = self.numSync
+        self.numSync = 0
 
         if (lastFrame):
             numSync += self.numPrevSync
@@ -419,7 +418,7 @@ class PSGCompressor(object):
                 numSync -= 63
             
             if (numSync > 0):
-                self.io.putb(0b00000000 | (numSync))
+                self.io.putb(0b00000000 | numSync)
             
                 if (args.debug):
                     sys.stderr.write("  wait: 00 {:06b}\n".format(numSync))
@@ -448,9 +447,9 @@ class PSGCompressor(object):
            
             if (n < 16):
                 self.io.putb(m)
-                s = "oneput: 01 00{:04b} {:02x}".format(self.io.len(),n,m)
+                s = "oneput: 01 00{:04b} {:02x}".format(n,m)
             else:
-                s = "lutput: 01 {:06b} -> {:02x}".format(self.io.len(),n,m)
+                s = "lutput: 01 {:06b} -> {:02x}".format(n,m)
         
             if (args.debug):
                 ss = "{:5d} - {:s} : {:d},{:d}\n".format(self.io.len(),s,\
@@ -596,7 +595,15 @@ if __name__ == "__main__":
 
             #
             if (cont and used == 0x0000):
-                raise RuntimeError( "Spurious empty frame - check the PSG file")
+                #
+                # For some reason PSG file was constructed so that it has outputs
+                # without register changes -> empty frame after delta coding.
+                # Substitute such frame as a frame wait. The wait frame is passed
+                # to frame parser in the psg.numPrevSync
+                #
+                if (args.debug):
+                    sys.stderr.write("Spurious empty frame - check the PSG file\n")
+                    continue
 
             psg.outputSyncTokens(False)
             psg.outputFrames()

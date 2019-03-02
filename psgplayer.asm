@@ -259,7 +259,7 @@ _lut:
 ;
 ;
 module:
-        incbin  "p.psg"
+        incbin  "u2.psg"
 
         END main
 
