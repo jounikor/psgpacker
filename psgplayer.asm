@@ -1,15 +1,16 @@
 ;
-; (c) 2018-19 Jouni Korhonen
+; (c) 2018-21 Jouni Korhonen
 ;
-; PSGPlayer v0.4a
+; PSGPlayer v0.5
 ;
+
 
 
         org     $8000
 
 
 main:
-        ld      hl,module
+        ld      hl,callback
         call    psgplayer+6
 
 loop:
@@ -39,10 +40,21 @@ loop:
         jr      loop
 
 
+        ; A dummy callback that just returns the same module location
+        ; The callback MUST return the module address in HL and "wait"
+        ; amount in A.
+        ; On entry A = 0 if this was called by the _init/_stop function.
+        ;          A > 0 then this was called for a bankswitch.
+callback:
+        ld      hl,module
+        xor     a
+        ret
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
 ; To init player:
-;    LD   HL,packedPSG
+;    LD   HL,callback_for_bankswitch
 ;    CALL psgplayer+6
 ;
 ; To unpack a frame:
@@ -55,6 +67,13 @@ loop:
 ;    CALL psgplayer+2
 ;    CALL psgplayer+0
 ;
+; Backswitch function:
+;  Inputs:
+;     A = 0 if called for init/stop
+;     A > 0 if called for bankswitch
+;  Returns:
+;     HL = ptr to the "new" module
+;     A = 0
 
 psgplayer:
         jr      _play   ; 0
@@ -64,9 +83,9 @@ _init:                  ; 6
 
 ;
 ; Input:
-;  HL = ptr to the packed PSG file.
+;  HL = ptr to callback function to return the module ptr.
 ;
-        ld      (_mod),hl
+        ld      (_cb),hl
         ;
 
 _stop:
@@ -74,22 +93,19 @@ _stop:
 ;
         ;
         xor     a
-        ld      hl,_regbuf+13
-        ld      (hl),$ff
- 
-        ld      b,13
-_clr:   dec     l
-        ld      (hl),a
+        ld      hl,_regbuf
+
+        ; Clears _regbuf and _rep 
+        ld      b,14+1
+_clr:   ld      (hl),a
+        inc     l
         djnz    _clr
         ;
-        ld      (_wait),a
-        ld      hl,(_mod)
-        ld      (_pos),hl
-        ;
-        ; At exit A=0 and HL=mod
-        ;
-        ret
-        ;
+
+        ld      hl,_ret
+        push    hl
+        ld      hl,(_cb)
+        jp      (hl)
 
 ;
 ; Called every frame refresh in a position that needs cycle exact timing.
@@ -135,12 +151,21 @@ _next:  ;
         dec     a
         ld      hl,(_pos)
         call m, _gettags
-        ld      (_pos),hl
+_ret:   ;
         ld      (_wait),a
+        ld      (_pos),hl
         ret
-
         ;
 _gettags:
+        ; A = $ff
+        ;
+        ld      a,(_rep)
+        sub     1
+        jr c,   _norestore
+        ld      (_rep),a
+        jr nz,  _norestore
+        ld      hl,(_resume)
+_norestore:
         ld      a,(hl)
         and     a
         ;
@@ -161,36 +186,51 @@ _not_eof:
 _tag_01rrnnnn:
         and     00111111b
         ld      d,HIGH(_regbuf)
-        ld      e,a
+        cp      15
+        jr z,   _callback
+        
+        cp      32
+        jr nc,   _lz
         cp      16
-        jr c,   _oneput
-_lutput:
-        ; TAG 01 rrnnnn
-        and     00001111b
-        ld      c,a
-        ld      a,(de)
-        ld      e,c
-        ld      (de),a
-        xor     a
-        ret
+        jr nc,  _cache
 _oneput:
         ; TAG 01 00nnnn + [8]
-        push    de
-        pop     ix
-        ld      a,(hl)
+        ld      e,a
         ldi
-        ;
-        ld      c,(ix+32)
-        ld      (ix+16),c
-        ld      c,(ix+48)
-        ld      (ix+32),c
-        ld      (ix+48),a
         xor     a
         ret
+        ;
+_callback:                      ; This code is still untested!
+        ; TAG 01 001111 + [8]
+        ld      a,(hl)
+        ld      hl,_norestore
+        push    hl
+        ld      hl,(_cb)
+        ; A > 0
+        jp      (hl)
+        ;
+_lz:
+        ; TAG 01 rrrrrr nnnnnnnn nnnnnnnn
+        ;
+        add     a,-31           ; Sets C-flag. This is important!
+        ld      (_rep),a
+        ld      b,(hl)
+        inc     hl
+        ld      c,(hl)
+        inc     hl
+        ld      (_resume),hl
+        sbc     hl,bc
+        jr      _norestore
+
+_cache:
+        ; Placeholder for a AY reg caching
+        xor	a
+        ret
+
 _tag_1xnnnnnn:
         ;
-        ; TAGs 11 nnnnnn nnnnnnnn  -> array of [8] for registers
-        ;      10 nnnnnn nnnnnnnn  -> LZ from history
+        ; TAGs 11 llllll hhhhhhhh  -> array of [8] for registers
+        ;      10 nnnnnn nnnnnnnn  -> single count LZ from history
         ;
         cp      11000000b
         jr nc,  _tag_11nnnnnn
@@ -211,55 +251,51 @@ _tag_1xnnnnnn:
         ;
 _tag_11nnnnnn:
         ;
-        ; TAG 11 nnnnnn nnnnnnnn
-        ;   reg  012345 6789abcd
+        ; TAG 11 llllll hhhhhhhh
+        ;   reg  543210 dcba9876
         ;
+        
         ld      c,a         ; C > 14 always..
         ld      b,(hl)
         inc     hl
-        add     a,a
-        add     a,a
         ld      de,_regbuf
         
         REPT    6
-        add     a,a
+        rrca
         jr nc,  $+5
         ldi
         db      $fe
         inc     e
         ENDM
         ld      a,b
-        REPT    7
-        add     a,a
+        REPT    8
+        rrca
         jr nc,  $+5
         ldi
         db      $fe
         inc     e
         ENDM
-        add     a,a
-        ret nc
-        ldi
-        ;                   ; A = 0
+        xor     a
         ret
 
-
-;
-;
-_mod:   dw      0           ; PSG song initial position
+        ;
 _pos:   dw      0           ; PSG song position..
-_wait:  db      0
+_resume:
+        dw      0           ; PSG resume song position after LZ  
+_cb:    dw      0           ; Backswitch code callback function
 
         org     ($+255) & 0xff00    ; Align to 256 bytes
 _regbuf:
-_lut:
-        ds      14+2
-        ds      48
-
+        ds      14
+_rep:   db      0           ; LZ repeat counter
+_wait:  db      0
+        ; The remaining 240 will likely be used in future
+        ; for the register line caching.
 
 ;
 ;
 module:
-        incbin  "u2.psg"
+        incbin  "u2.pac"
 
         END main
 

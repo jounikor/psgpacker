@@ -1,6 +1,6 @@
 #
-# (c) 2018-19 by Jouni 'Mr.Spiv' Korhonen
-# version 0.6
+# (c) 2018-21 by Jouni 'Mr.Spiv' Korhonen
+# version 0.7
 #
 #
 # This is free and unencumbered software released into the public domain.
@@ -31,6 +31,9 @@
 
 import sys
 import argparse
+from io import BufferedWriter
+from io import BufferedReader
+from io import BytesIO
 
 #
 #
@@ -47,16 +50,6 @@ class PSGHeader(object):
             self.freq = freq
         else:
             self.freq = 0
-
-#
-#
-#
-#
-
-class PSGFrame(object):
-    def __init__(self, sync, regs):
-        self.numSync = sync
-        self.regList = regs
 
 #
 #
@@ -158,10 +151,10 @@ class PSGio(object):
         name or a bytearray.
 
         Args:
-            input (file, str or bytearray): A reference to a mode 'rb' opened
+            input (sys.stdin.buffer, str or bytearray): A reference to a mode 'rb' opened
                 file object, filename to open or a bytearray object containing
                 the data to read,
-            output (file, str or bytearray): A reference to a mode 'wb' opened
+            output (sys.stdout.buffer, str or bytearray): A reference to a mode 'wb' opened
                 file object, a filename to create or a bytearray object with
                 enough space to hold the output file.
 
@@ -178,7 +171,7 @@ class PSGio(object):
         self.ifile = False
         self.ofile = False
 
-        if (type(inp) == file):
+        if (isinstance(inp,BufferedReader)):
             self.getb = self._file_getb
         elif (type(inp) == bytearray):
             self.getb = self._mem_getb
@@ -186,10 +179,12 @@ class PSGio(object):
             self.ihndl = open(inp,"rb")
             self.getb = self._file_getb
             self.ifile = True
+        elif (inp is None):
+            pass
         else:
             raise NotImplementedError("Input method")
 
-        if (type(oup) == file):
+        if (isinstance(oup,BufferedWriter)):
             self.putb = self._file_putb
         elif (type(oup) == bytearray):
             self.putb = self._mem_putb
@@ -197,6 +192,8 @@ class PSGio(object):
             self.ohndl = open(oup,"wb")
             self.ofile = True
             self.putb = self._file_putb
+        elif (oup is None):
+            pass
         else:
             raise NotImplementedError("Output method")
     
@@ -224,14 +221,14 @@ class PSGio(object):
     def _file_getb(self):
         b = self.ihndl.read(1)
 
-        if (b == ""):
+        if (b.__len__() == 0):
             return -1
         else:
             self.iptr += 1
             return ord(b)
 
     def _file_putb(self,b):
-        self.ohndl.write(chr(b))
+        self.ohndl.write(bytes([b,]))
         self.optr += 1
 
     def _mem_getb(self):
@@ -257,7 +254,6 @@ class PSGio(object):
     def read(self):
         return self.iptr
 
-
 #
 #
 #
@@ -265,20 +261,18 @@ class PSGio(object):
 
 class PSGCompressor(object):
     NUMREGS = 14
-    LUTSIZE = 48
-    LUTTOTAL = 64
-    
+
     def __init__(self, io):
         self.io = io
         self.regList = []
         self.history = {}
         self.numSync = 0
         self.numPrevSync = 0
-        self.lut = bytearray(self.LUTTOTAL)
-        self.lutIndex = 0
         self.regBuffer = bytearray(self.NUMREGS)
+        self.tokens = []
+        self.global_used = 0
 
-        for n in xrange(self.NUMREGS):
+        for n in range(self.NUMREGS):
             self.regBuffer[n] = 0
 
     #
@@ -289,7 +283,7 @@ class PSGCompressor(object):
         tag = b"PSG\x1a"
         hdr = bytearray(16)
 
-        for n in xrange(16):
+        for n in range(16):
             b = self.io.getb()
             if (b < 0):
                 raise IOError("Premature end of file")
@@ -305,7 +299,7 @@ class PSGCompressor(object):
     # Parse a PSG frame..
     #
 
-    def parseFrames(self):
+    def PASS1_parseFrames(self):
         self.regList = []
         self.numSync += self.numPrevSync
         self.numPrevSync = 0
@@ -381,17 +375,22 @@ class PSGCompressor(object):
     # Also store the last change register index for "oneput" use.
     #
 
-    def update(self):
+    def PASS1_update(self):
         self.used = 0
         self.only = -1
+        cnt = 0
 
         for reg,val in self.regList:
             if (self.regBuffer[reg] != val):
-                self.used = self.used | (1 << (self.NUMREGS - 1 - reg))
+                self.used = self.used | (1 << reg)
                 self.regBuffer[reg] = val
                 self.only = reg
+                cnt += 1
 
-        return self.used
+        # Gather usage of AY registers over the entire PSG file
+        self.global_used |= self.used
+
+        return cnt
 
     #
     # Output "end of interrupt" marks i.e. frame waits.
@@ -400,7 +399,7 @@ class PSGCompressor(object):
     # frame waits.
     #
 
-    def outputSyncTokens(self,lastFrame):
+    def PASS1_outputSyncTokens(self,lastFrame):
         numSync = self.numSync
         self.numSync = 0
 
@@ -411,148 +410,194 @@ class PSGCompressor(object):
             numSync -= 1
 
             while (numSync > 63):
-                self.io.putb(0b00111111)
+                self.tokens.append(bytes([0b00111111,]))
                 if (args.debug):
-                    sys.stderr.write("  wait: 00 111111\n")
+                    sys.stderr.write("TOKEN  wait: 00 111111\n")
                 
                 numSync -= 63
             
             if (numSync > 0):
-                self.io.putb(0b00000000 | numSync)
-            
+                self.tokens.append(bytes([0b00000000|numSync,]))
+
                 if (args.debug):
-                    sys.stderr.write("  wait: 00 {:06b}\n".format(numSync))
+                    sys.stderr.write("TOKEN  wait: 00 {:06b}\n".format(numSync))
     
+
     #
     # Output PSG data in compressed form.
     #
 
-    def outputFrames(self):
+    def PASS1_outputFrames(self):
         used = self.used
 
         # output 0 or 1 reglists
         if (used == 0):
             return False
 
-        if (used & (used - 1) == 0):
-            # only 1 bit set here..
-          
+        # Check if there is only a single changed register and '--oneput' is enabled
+        if (args.oneput and (used & (used - 1) == 0)):
             n = self.only
             m = self.regBuffer[n]
 
-            if (args.lut):
-                n = self.checkLUT(n,m)
-        
-            self.io.putb(0b01000000 | n)
-           
-            if (n < 16):
-                self.io.putb(m)
-                s = "oneput: 01 00{:04b} {:02x}".format(n,m)
-            else:
-                s = "lutput: 01 {:06b} -> {:02x}".format(n,m)
+            self.tokens.append(bytes([0b01000000|n,m]))
+            s = "oneput: 01 00{:04b} {:02x}".format(n,m)
         
             if (args.debug):
-                ss = "{:5d} - {:s} : {:d},{:d}\n".format(self.io.len(),s,\
+                ss = "TOKEN  {:s} : {:d},{:d}\n".format(s,\
                         self.numSync,self.numPrevSync)
                 sys.stderr.write(ss)
-            
+           
             return True
         
-        # .. 
+        # Do we output all 14 registers or just the changed ones? 
+        if (args.sparse is False):
+            #used = 0b11111111111111
+            used = self.global_used
 
-        dis = -1
+        s = f"regput: 11 {used:014b} "
+        # Note! bytes are swapped to help the ASM depacker
+        regs  = bytes([0b11000000 | (used & 0x3f), used >> 6])
+       
+        for n in range(self.NUMREGS):
+            if (used & 0x0001):
+                regs += self.regBuffer[n].to_bytes(1,byteorder='big')
 
-        # condense a key for lookups
-        key = ""
+                s += f"{self.regBuffer[n]:02x} "
 
-        for n in xrange(self.NUMREGS):
-            if (used & (1 << (self.NUMREGS - 1- n))):
-                key += chr(n)
-                key += chr(self.regBuffer[n])
+            used >>= 1
 
-        if (args.lz):
-            dis = self.checkHistory(key)
-
-        if (dis >= 0):
-            regs = chr(0b10000000 | (dis >> 8))
-            regs += chr(dis & 0xff)
-            s = "lz: 10 {:06b}{:08b} -> {:d}".format(dis>>8,dis&0xff,dis-2)
-        else:
-            s = "regput: 11 {:014b} ".format(used)
-            regs  = chr(0b11000000 | (used >> 8))
-            regs += chr(used & 0xff)
-        
-            for n in xrange(1,key.__len__(),2):
-                regs += key[n]
-                s += "{:02x} ".format(ord(key[n]))
-
-        for n in regs:
-            self.io.putb(ord(n))
+        self.tokens.append(regs)
 
         #
         if (args.debug):
-            ss = "{:5d} - {:s} : {:d},{:d}\n".format(self.io.len(),s,\
+            ss = "TOKEN  {:s} : {:d},{:d}\n".format(s,\
                     self.numSync,self.numPrevSync)
             sys.stderr.write(ss)
         
         return True
 
     #
-    # Check it the register data is available in the LUT
-    # buffer.. also update the buffer in a FIFO manner if
-    # the regoster value was not found.
-    # 3 LUT positions are maintained for each register.
+    #
+    #
+   
+    def PASS3_lz_null(self):
+        pass
+
+
+    def PASS3_lz_multi(self):
+        max_head = self.tokens.__len__()
+        encoded_pos = 0
+        current_head = 0
+
+        while (current_head < max_head):
+            current_token = self.tokens[current_head]
+            current_token_length = current_token.__len__()
+            match_count = 0
+            match_offset = 65536
+            skip_count = 1
+            temp_match_length = 0
+
+            if (current_token not in self.history):
+                # add this new frame position if not ever seen before..
+                self.history[current_token] = (encoded_pos,current_head)
+            else:
+                history_pos,history_head  = self.history[current_token]
+                match_offset = encoded_pos - history_pos + 2
+                
+                if (match_offset > 65535):
+                    # Past maximum offset.. initialize to this frame and advance to the next token
+                    self.history[current_token] = (encoded_pos,current_head)
+                else:
+                    temp_current_head = current_head
+                    temp_history_head = history_head
+
+                    while (temp_current_head < max_head and match_count < 32):
+                        if (self.tokens[temp_history_head].__len__() < 4):
+                            break
+
+                        # Do PSG frames match? 
+                        if (self.tokens[temp_current_head] != self.tokens[temp_history_head]):
+                            break
+
+                        temp_match_length += self.tokens[temp_history_head].__len__()
+                        temp_current_head += 1
+                        temp_history_head += 1
+                        match_count += 1
+
+            # Did we find any matching frames?
+            if (match_count == 1 and temp_match_length > 2 and match_offset < 16384):
+                if (args.debug):
+                    sys.stderr.write(f"single LZ match ({match_offset})\n")
+                # Encode single short LZ
+                match_offset |= 0b1000000000000000
+                self.tokens[current_head] = match_offset.to_bytes(2,byteorder='big')
+                current_token_length = 2
+            elif (temp_match_length > 3):
+                if (args.debug):
+                    sys.stderr.write(f"multipass LZ match ({match_offset},{match_count})\n")
+                # Encode multipass LZA - Note.. match_offset is one too short here.
+                # The offset must be adjusted in the player!
+                skip_count = match_count
+                match_count += 31
+                match_count |= 0b01000000
+                match_count = (match_count << 8) | (match_offset >> 8)
+                match_count = (match_count << 8) | (match_offset & 0xff)
+                # This breaks if match_count becomes "negative"..
+                self.tokens[current_head] = match_count.to_bytes(3,byteorder='big')
+
+                # And "None" skipped tokens..
+                for to_none in range(current_head+1,temp_current_head):
+                    self.tokens[to_none] = None
+
+                current_token_length = 3
+
+            # Advance to the next token..
+            encoded_pos   += current_token_length
+            current_head  += skip_count
+
+    #
+    # Greedy parsing of history data..
+    #
+    def PASS3_lz_single(self):
+        encoded_pos = 0
+
+        for current_head in range(self.tokens.__len__()):
+            current_token = self.tokens[current_head]
+            current_token_length = current_token.__len__()
+
+            if (current_token not in self.history):
+                self.history[current_token] = (encoded_pos,current_head)
+            else:
+                # There should not b more than 1 match anyway..
+                history_pos,history_head = self.history[current_token]
+                match_offset = encoded_pos - history_pos + 2
+        
+                # Make sure we only match against a regput tag..
+                if (current_token_length > 2):
+                    if (match_offset < 16384):
+                        if (args.debug):
+                            sys.stderr.write(f"LZ match ({match_offset},{current_token_length})\n")
+                        
+                        match_offset |= 0b1000000000000000
+                        self.tokens[current_head] = match_offset.to_bytes(2,byteorder='big')
+                            
+                        # LZ tag is 2 bytes total..
+                        current_token_length = 2
+                    else:
+                        # If we are outside offset reach discard the match and update new macth position..
+                        self.history[current_token] = (encoded_pos,current_head)
+
+            encoded_pos += current_token_length
+
+    #
+    #
     #
     
-    def checkLUT(self,n,r):
-        if (r == self.lut[n+16]):
-            return n+16
-        if (r == self.lut[n+32]):
-            return n+32
-        if (r == self.lut[n+48]):
-            return n+48
-
-        self.lut[n+16] = self.lut[n+32]
-        self.lut[n+32] = self.lut[n+48]
-        self.lut[n+48] = r
-        return n
-
-    #
-    # Check if the regiter+value array has already been
-    # seen in past. The history is maintained for past
-    # 16382 locations in the file. 2 byte adjustment is
-    # done in the distance from the current location to the
-    # history to speed up the decompression routine.
-    #
-
-    def checkHistory(self,key):
-        if (self.history.has_key(key)):
-            pos = self.history[key]
-        else:
-            pos = -1
-
-        if (pos == -1):
-            self.history[key] = self.io.len()
-            return -1
-
-        # +2 compensates increment of 2 in the depacker..
-        dis = self.io.len() - pos  + 2
-        
-        if (dis >= 2**14):
-            self.history[key] = self.io.len()
-            dis = -1
-
-        return dis
-        
-    #
-    #
-    #
-    
-    def outputEOF(self):
+    def PASS1_outputEOF(self):
         if (args.debug):
-            sys.stderr.write("output: 00 000000\n")
+            sys.stderr.write("TOKEN  end: 00 000000\n")
         
-        self.io.putb(0x00)
+        self.tokens.append(bytes([0b00000000,]))
 
 #
 #
@@ -562,39 +607,66 @@ class PSGCompressor(object):
 prs = argparse.ArgumentParser()
 prs.add_argument("input_file",metavar="input_file",type=str,help="PSG file or '' if stdin")
 prs.add_argument("output_file",metavar="output_file",type=str,nargs="?",help="Output file or stdout "
-                 "if missing", default=sys.stdout)
-prs.add_argument("--debug",dest="debug",action="store_true",default=False,help="show debug output")
-prs.add_argument("--lz",dest="lz",action="store_true",default=False,help="enable history references")
-prs.add_argument("--lut",dest="lut",action="store_true",default=False,help="enable rotating "
-    "lookup tables")
+                 "if missing", default="")
+prs.add_argument("--verbose","-v",dest="verbose",action="store_true",default=False,help="Show some process output")
+prs.add_argument("--debug",dest="debug",action="store_true",default=False,help="Show debug output")
+prs.add_argument("--lz","-z",dest="lz",action="store_true",default=False,help="Enable history references")
+prs.add_argument("--multi","-m",dest="multi",action="store_true",default=False,help="Enable multi-frame matches of history references")
+prs.add_argument("--delta","-d",dest="sparse",action="store_true",default=False,
+    help="Enable delta coding of AY register writes")
+prs.add_argument("--oneput","-o",dest="oneput",action="store_true",default=False,
+    help="Enable single changed register output")
+prs.add_argument("--bankswitch","-b",dest="bankswitch",action="store_true",default=False,
+    help="Add 16K bank boundary marks")
+
 args = prs.parse_args()
 
 if __name__ == "__main__":
     if (args.input_file == ""):
-        input_file = sys.stdin
+        input_file = sys.stdin.buffer
     else:
         input_file = args.input_file
 
-    with PSGio(input_file,args.output_file) as io:
-        psg = PSGCompressor(io)
+    if (args.output_file == ""):
+        if (args.bankswitch):
+            sys.stderr.write("--bankswitch work only with output files\n")
+            exit(0)
 
+        output_file = sys.stdout.buffer
+    else:
+        output_file = args.output_file
+
+    if (args.bankswitch):
+        raise NotImplementedError("--bankswitch")
+        exit()
+
+    if (args.debug):
+        args.verbose = True
+
+    with PSGio(input_file,output_file) as io:
+        psg = PSGCompressor(io)
         hdr = psg.parseHeader()
 
         if (hdr is not None):
             if (args.debug):
-                sys.stderr.write("{}\n".format(hdr.tag))
+                sys.stderr.write(f"{hdr.tag}\n")
         else:
             sys.stderr.write("not a PSG file\n")
             exit()
 
         cont = True
 
+        # PASS #1
+
+        if (args.verbose):
+            sys.stderr.write("PASS #1 - tokenizing..\n")
+
         while (cont):
-            cont = psg.parseFrames()
-            used = psg.update()
+            cont = psg.PASS1_parseFrames()
+            used = psg.PASS1_update()
 
             #
-            if (cont and used == 0x0000):
+            if (cont and used == 0):
                 #
                 # For some reason PSG file was constructed so that it has outputs
                 # without register changes -> empty frame after delta coding.
@@ -603,23 +675,61 @@ if __name__ == "__main__":
                 #
                 if (args.debug):
                     sys.stderr.write("Spurious empty frame - check the PSG file\n")
-                    continue
+                continue
 
-            psg.outputSyncTokens(False)
-            psg.outputFrames()
+            psg.PASS1_outputSyncTokens(False)
+            psg.PASS1_outputFrames()
 
         #
+        psg.PASS1_outputSyncTokens(True)
+        psg.PASS1_outputEOF()
 
-        psg.outputSyncTokens(True)
-        psg.outputEOF()
+        # PASS #2 - not implemented yet
+
+	
+        # PASS #3
+
+        if (args.verbose):
+            sys.stderr.write("PASS #3 - LZ crunching\n")
+
+        if (args.lz):
+            if (args.multi):
+                # Refined multistep LZ
+                psg.PASS3_lz_multi()
+            else:
+                # Legacy single shot LZ
+                psg.PASS3_lz_single()
+        else:
+            # Fake PASS #3 to add bank switching and alignment support
+            pass
+            psg.PASS3_lz_null()
+
+        # PASS #4 - saving
+
+        if (args.verbose):
+            sys.stderr.write("PASS #4 - saving PSGPacker output\n")
+        
+        for b in psg.tokens:
+            if (b is not None):
+                for n in range(b.__len__()):
+                    io.putb(b[n])
+
+
 
 #
 #
-# 00 000000               -> EOF
-# 00 nnnnnn               -> wait sync & repeat previour line nnnnnn times
-# 01 00nnnn               -> register nnnn followed by 1 times [8]
-# 01 rrnnnn               -> if rr > 0 then take register from LUT[rrnnnn]
-# 10 nnnnnn nnnnnnnn      -> point at 2^14-1 bytes in history for a TAG "11 nnnnnn nnnnnnnn"
-# 11 nnnnnn nnnnnnnn      -> regs 0 to 13 followed by 1 to 14 times [8]
+# 00 000000          -> EOF
+# 00 nnnnnn          -> wait sync & repeat previour PSG reg output nnnnnn times
+# 01 00nnnn          -> register nnnn (0-13) followed by 1 time [8]
+# 01 001110          -> reserved tag
+# 01 001111 bbbbbbbb  -> bank switch mark followed by the next bank number > 0
+# 01 rrrrrr >= 16
+# 01 ffffff          -> Play from cached register bank rrrrrr-16
+#    rrrrrr >= 32
+# 01 rrrrrr nnnnnnnn nnnnnnnn -> point at 2^16-1 bytes in history and play from there for rrrrrr-31 times
+# 10 nnnnnn nnnnnnnn -> point at 2^14-1 bytes in history and play from there once
+# 11 llllll hhhhhhhh -> regs 0 to 13 followed by 1 to 14 times [8]
 #
 
+
+# // vim: set autoindent cursorline tabstop=4 softtabstop=4 expandtab
