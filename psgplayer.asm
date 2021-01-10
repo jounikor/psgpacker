@@ -1,9 +1,12 @@
 ;
 ; (c) 2018-21 Jouni Korhonen
 ;
-; PSGPlayer v0.5
+; PSGPlayer v0.6
 ;
 
+
+USE_CACHE   equ 1
+USE_ONEPUT  equ 0
 
 
         org     $8000
@@ -39,7 +42,7 @@ loop:
 
         jr      loop
 
-
+        ;
         ; A dummy callback that just returns the same module location
         ; The callback MUST return the module address in HL and "wait"
         ; amount in A.
@@ -47,6 +50,26 @@ loop:
         ;          A > 0 then this was called for a bankswitch.
 callback:
         ld      hl,module
+        
+        IF  USE_CACHE
+        push    de
+        push    bc
+        ld      d,HIGH(_cache)
+        ld      b,a
+        ld      a,00010000b
+_prep_cache:
+        ld      c,(hl)
+        inc     hl
+        ld      e,a
+        ldir
+        add     a,16
+        jr nc,  _prep_cache
+        ;
+        pop     bc
+        pop     de
+        ENDIF
+        
+_not_init:
         xor     a
         ret
 
@@ -80,7 +103,6 @@ psgplayer:
         jr      _stop   ; 2
         jr      _next   ; 4
 _init:                  ; 6
-
 ;
 ; Input:
 ;  HL = ptr to callback function to return the module ptr.
@@ -186,19 +208,22 @@ _not_eof:
 _tag_01rrnnnn:
         and     00111111b
         ld      d,HIGH(_regbuf)
-        cp      15
-        jr z,   _callback
         
         cp      32
         jr nc,   _lz
         cp      16
-        jr nc,  _cache
+        jr nc,  _cached_tag
+        
+        IF USE_ONEPUT           ; Does not harm to leave included even if
+        cp      15              ; the packed PSGPacker did not use --oneput
+        jr z,   _callback
 _oneput:
         ; TAG 01 00nnnn + [8]
         ld      e,a
         ldi
         xor     a
         ret
+        ENDIF
         ;
 _callback:                      ; This code is still untested!
         ; TAG 01 001111 + [8]
@@ -222,9 +247,16 @@ _lz:
         sbc     hl,bc
         jr      _norestore
 
-_cache:
-        ; Placeholder for a AY reg caching
-        xor	a
+_cached_tag:
+        push    hl
+        ld      h,d             ; D = HIGH(_regbuf) 
+        add     a,a
+        add     a,a
+        add     a,a
+        add     a,a
+        ld      l,a
+        call    _norestore
+        pop     hl
         ret
 
 _tag_1xnnnnnn:
@@ -289,13 +321,19 @@ _regbuf:
         ds      14
 _rep:   db      0           ; LZ repeat counter
 _wait:  db      0
+        
+        IF USE_CACHE
+_cache: ds      15*16       ; 15 cached lines; must be 16 bytes aligned
+                            ; within 256 bytes aligned block.
+        ENDIF
+        
         ; The remaining 240 will likely be used in future
         ; for the register line caching.
 
 ;
 ;
 module:
-        incbin  "u2.pac"
+        incbin  "u5.psg"
 
         END main
 
