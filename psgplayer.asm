@@ -1,13 +1,18 @@
 ;
 ; (c) 2018-21 Jouni Korhonen
 ;
-; PSGPlayer v0.6
+; PSGPlayer v0.7
 ;
 
 
+; This must be set to 1 if PSGPacker used --cache and must be 0 otherwise
 USE_CACHE   equ 1
+; This must be set to 1 if PSGPacker used --oneput
 USE_ONEPUT  equ 0
 
+
+;-----------------------------------------------------------------------------
+; Example main loop
 
         org     $8000
 
@@ -327,9 +332,6 @@ _cache: ds      15*16       ; 15 cached lines; must be 16 bytes aligned
                             ; within 256 bytes aligned block.
         ENDIF
         
-        ; The remaining 240 will likely be used in future
-        ; for the register line caching.
-
 ;
 ;
 module:
