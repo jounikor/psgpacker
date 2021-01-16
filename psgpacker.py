@@ -811,7 +811,9 @@ if __name__ == "__main__":
 
         if (args.lz):
             if (args.verbose):
-                sys.stderr.write("PASS #3 - LZ crunching\n")
+                m = "enabled" if args.multi else "disabled"
+
+                sys.stderr.write(f"PASS #3 - LZ crunching with multiple matches {m}\n")
             
             if (args.multi):
                 # Refined multistep LZ
@@ -826,9 +828,6 @@ if __name__ == "__main__":
         else:
             # Fake PASS #3 to add bank switching and alignment support
             psg.PASS3_lz_null()
-
-            if (args.verbose):
-                sys.stderr.write(f"  PSG file length after PASS3 is {psg.get_output_size()} bytes\n")
         
         # PASS #4 - saving
 

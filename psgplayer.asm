@@ -8,7 +8,7 @@
 ; This must be set to 1 if PSGPacker used --cache and must be 0 otherwise
 USE_CACHE   equ 1
 ; This must be set to 1 if PSGPacker used --oneput
-USE_ONEPUT  equ 0
+USE_ONEPUT  equ 1
 
 
 ;-----------------------------------------------------------------------------
@@ -47,36 +47,6 @@ loop:
 
         jr      loop
 
-        ;
-        ; A dummy callback that just returns the same module location
-        ; The callback MUST return the module address in HL and "wait"
-        ; amount in A.
-        ; On entry A = 0 if this was called by the _init/_stop function.
-        ;          A > 0 then this was called for a bankswitch.
-callback:
-        ld      hl,module
-        
-        IF  USE_CACHE
-        push    de
-        push    bc
-        ld      d,HIGH(_cache)
-        ld      b,a
-        ld      a,00010000b
-_prep_cache:
-        ld      c,(hl)
-        inc     hl
-        ld      e,a
-        ldir
-        add     a,16
-        jr nc,  _prep_cache
-        ;
-        pop     bc
-        pop     de
-        ENDIF
-        
-_not_init:
-        xor     a
-        ret
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -312,6 +282,37 @@ _tag_11nnnnnn:
         db      $fe
         inc     e
         ENDM
+        xor     a
+        ret
+
+        ;
+        ; A dummy callback that just returns the same module location
+        ; The callback MUST return the module address in HL and "wait"
+        ; amount in A.
+        ; On entry A = 0 if this was called by the _init/_stop function.
+        ;          A > 0 then this was called for a bankswitch.
+callback:
+        ld      hl,module
+        
+        IF  USE_CACHE
+        push    de
+        push    bc
+        ld      d,HIGH(_cache)
+        ld      b,a
+        ld      a,00010000b
+_prep_cache:
+        ld      c,(hl)
+        inc     hl
+        ld      e,a
+        ldir
+        add     a,16
+        jr nc,  _prep_cache
+        ;
+        pop     bc
+        pop     de
+        ENDIF
+        
+_not_init:
         xor     a
         ret
 
