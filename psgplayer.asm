@@ -69,6 +69,7 @@ loop:
 ;  Inputs:
 ;     A = 0 if called for init/stop
 ;     A > 0 if called for bankswitch
+;     D = HIGH(_regbuf)
 ;  Returns:
 ;     HL = ptr to the "new" module
 ;     A = 0
@@ -90,12 +91,13 @@ _stop:
 ;
         ;
         xor     a
-        ld      hl,_regbuf
+_stop2:
+        ld      de,_regbuf
 
         ; Clears _regbuf and _rep 
         ld      b,14+1
-_clr:   ld      (hl),a
-        inc     l
+_clr:   ld      (de),a
+        inc     e
         djnz    _clr
         ;
 
@@ -168,9 +170,10 @@ _norestore:
         ;
         ; TAG 00 00000 -> eof
         ;
-        jp z,   _stop
+        jp z,   _stop2
         ;
 _not_eof:
+        ld      d,HIGH(_regbuf)
         inc     hl
         jp m,   _tag_1xnnnnnn
         ;
@@ -182,7 +185,6 @@ _not_eof:
         ;
 _tag_01rrnnnn:
         and     00111111b
-        ld      d,HIGH(_regbuf)
         
         cp      32
         jr nc,   _lz
@@ -265,8 +267,9 @@ _tag_11nnnnnn:
         ld      c,a         ; C > 14 always..
         ld      b,(hl)
         inc     hl
-        ld      de,_regbuf
-        
+        ;ld      de,_regbuf
+        ld      e,0
+
         REPT    6
         rrca
         jr nc,  $+5
@@ -291,13 +294,15 @@ _tag_11nnnnnn:
         ; amount in A.
         ; On entry A = 0 if this was called by the _init/_stop function.
         ;          A > 0 then this was called for a bankswitch.
+        ;          D = HIGH(_regbuf) = HIGH(_cache)
 callback:
         ld      hl,module
-        
+        and     a
+        jr nz,  _not_init
+
+        ; This code must be included when A=0 and PSGPacker used --cache
         IF  USE_CACHE
-        push    de
-        push    bc
-        ld      d,HIGH(_cache)
+        ;ld      d,HIGH(_cache)
         ld      b,a
         ld      a,00010000b
 _prep_cache:
@@ -308,8 +313,6 @@ _prep_cache:
         add     a,16
         jr nc,  _prep_cache
         ;
-        pop     bc
-        pop     de
         ENDIF
         
 _not_init:
@@ -329,7 +332,7 @@ _rep:   db      0           ; LZ repeat counter
 _wait:  db      0
         
         IF USE_CACHE
-_cache: ds      15*16       ; 15 cached lines; must be 16 bytes aligned
+        ds      15*16       ; 15 cached lines; must be 16 bytes aligned
                             ; within 256 bytes aligned block.
         ENDIF
         
