@@ -1,7 +1,7 @@
 ;
 ; (c) 2018-21 Jouni Korhonen
 ;
-; PSGPlayer v0.7
+; PSGPlayer v0.71
 ;
 
 
@@ -92,15 +92,20 @@ _stop:
         ;
         xor     a
 _stop2:
-        ld      de,_regbuf
+        ld      hl,_regbuf+13
 
-        ; Clears _regbuf and _rep 
-        ld      b,14+1
-_clr:   ld      (de),a
-        inc     e
-        djnz    _clr
-        ;
+        ; Set R15 to $ff so that _play() will skip it if not exlicitly
+        ; changed by the _next() 
+        ld      (hl),$ff
 
+        ; Clears _regbuf 
+_clr:   dec     l
+        ld      (hl),a
+        jr nz,  _clr
+
+        ; D = HIGH(_regbuf)
+        ld      d,h
+        
         ld      hl,_ret
         push    hl
         ld      hl,(_cb)
@@ -110,8 +115,8 @@ _clr:   ld      (de),a
 ; Called every frame refresh in a position that needs cycle exact timing.
 ; The subroutine outputs the register delta buffer into the AY registers.
 ;
-; Total 560 cycles
-;
+; Total 562 cycles
+
 _play:  ;
         ld      de,$bfff    ; 10
         ld      bc,$fffd    ; 10
@@ -127,17 +132,17 @@ _play:  ;
         ld      b,d         ;  4
         ld      a,(hl)      ;  7
         ld      (hl),e      ;  7
-        cp      e           ;  4 -> 57+13*35
+        cp      e           ;  4 -> 64+13*36
         ;
-        jr z,   _nops       ; 12 if jr, 5 if pass through
+        jr z,   _nops       ; 12 if jr, 7 if pass through
         ;
         out     (c),a       ; 12
 _nops:
-        ret nz              ; 11 if out, 5 if jr
-        ret z               ; 11 if jr, 5 ..
+        ret     nz          ; 11 if cc true, 5 if cc false (pass through)
+        ret z               ; 11/5
         ;
-        ; jr z -> 12+5+11 == 28
-        ; out  -> 5+12+11 == 28
+        ; jr z -> 12+5+11 == 30
+        ; out  -> 7+12+11 == 30
 
 ;
 ; Unpacks the next "frame" of PSG data.
@@ -324,13 +329,14 @@ _pos:   dw      0           ; PSG song position..
 _resume:
         dw      0           ; PSG resume song position after LZ  
 _cb:    dw      0           ; Backswitch code callback function
+_rep:   db      0           ; LZ repeat counter
+_wait:  db      0
 
         org     ($+255) & 0xff00    ; Align to 256 bytes
 _regbuf:
         ds      14
-_rep:   db      0           ; LZ repeat counter
-_wait:  db      0
-        
+        ds      2           ; padding
+
         IF USE_CACHE
         ds      15*16       ; 15 cached lines; must be 16 bytes aligned
                             ; within 256 bytes aligned block.

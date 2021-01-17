@@ -489,11 +489,6 @@ class PSGCompressor(object):
            
             return True
         
-        # Do we output all 14 registers or just the changed ones? 
-        if (args.sparse is False):
-            #used = 0b11111111111111
-            used = self.global_used
-
         s = f"regput: 11 {used:014b} "
         # Note! bytes are swapped to help the ASM depacker
         regs  = bytes([0b11000000 | (used & 0x3f), used >> 6])
@@ -711,8 +706,6 @@ prs.add_argument("--verbose","-v",dest="verbose",action="store_true",default=Fal
 prs.add_argument("--debug",dest="debug",action="store_true",default=False,help="Show debug output")
 prs.add_argument("--lz","-z",dest="lz",action="store_true",default=False,help="Enable history references")
 prs.add_argument("--multi","-m",dest="multi",action="store_true",default=False,help="Enable multi-frame matches of history references")
-prs.add_argument("--delta","-d",dest="sparse",action="store_true",default=False,
-    help="Enable delta coding of AY register writes")
 prs.add_argument("--oneput","-o",dest="oneput",action="store_true",default=False,
     help="Enable single changed register output")
 prs.add_argument("--bankswitch","-b",dest="bankswitch",action="store_true",default=False,
@@ -762,9 +755,8 @@ if __name__ == "__main__":
         # PASS #1
 
         if (args.verbose):
-            d = "enabled" if args.sparse else "disabled"
             o = "enabled" if args.oneput else "disabled"
-            sys.stderr.write(f"PASS #1 - tokenizing with delta coding {d} and oneput {o}\n")
+            sys.stderr.write(f"PASS #1 - tokenizing with oneput {o}\n")
 
         while (cont):
             cont = psg.PASS1_parseFrames()
