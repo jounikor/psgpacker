@@ -1,6 +1,6 @@
 #
 # (c) 2018-21 by Jouni 'Mr.Spiv' Korhonen
-# version 0.7
+# version 0.8
 #
 #
 # This is free and unencumbered software released into the public domain.
@@ -290,7 +290,7 @@ class PSGToken(object):
 class PSGCompressor(object):
     NUMREGS = 14
 
-    def __init__(self, io):
+    def __init__(self,io,verbose=False,debug=False):
         self.io = io
         self.regList = []
         self.history = {}
@@ -300,6 +300,11 @@ class PSGCompressor(object):
         self.tokens = []
         self.global_used = 0
         self.cached_tags = {}
+        self.debug = debug
+        self.verbose = verbose
+        self.number_of_banks = 1
+        self.bank_size = 0
+        self.header_size = 0
 
         for n in range(self.NUMREGS):
             self.regBuffer[n] = 0
@@ -325,7 +330,7 @@ class PSGCompressor(object):
             return None
             
             
-            
+    # 
     def get_output_size(self):
         len = 0
 
@@ -333,7 +338,7 @@ class PSGCompressor(object):
             if (current_token is not None):
                 len += current_token.encoding.__len__()
 
-        return len
+        return len+self.header_size
 
     #
     # Parse a PSG frame..
@@ -344,7 +349,7 @@ class PSGCompressor(object):
         self.numSync += self.numPrevSync
         self.numPrevSync = 0
 
-        if (args.debug):
+        if (self.debug):
             sys.stderr.write("Parsing at {:5x}, numSync: {:d}\n".\
                 format(self.io.read(),self.numSync))
 
@@ -451,7 +456,8 @@ class PSGCompressor(object):
 
             while (numSync > 63):
                 self.tokens.append(PSGToken(PSGToken.TAG_SYNC,bytes([0b00111111,])))
-                if (args.debug):
+                
+                if (self.debug):
                     sys.stderr.write("TOKEN  wait: 00 111111\n")
                 
                 numSync -= 63
@@ -459,7 +465,7 @@ class PSGCompressor(object):
             if (numSync > 0):
                 self.tokens.append(PSGToken(PSGToken.TAG_SYNC,bytes([0b00000000|numSync,])))
 
-                if (args.debug):
+                if (self.debug):
                     sys.stderr.write("TOKEN  wait: 00 {:06b}\n".format(numSync))
     
 
@@ -482,7 +488,7 @@ class PSGCompressor(object):
             self.tokens.append(PSGToken(PSGToken.TAG_ONEPUT,bytes([0b01000000|n,m]),self.regBuffer[13]))
             s = "oneput: 01 00{:04b} {:02x}".format(n,m)
         
-            if (args.debug):
+            if (self.debug):
                 ss = "TOKEN  {:s} : {:d},{:d}\n".format(s,\
                         self.numSync,self.numPrevSync)
                 sys.stderr.write(ss)
@@ -502,9 +508,9 @@ class PSGCompressor(object):
             used >>= 1
 
         self.tokens.append(PSGToken(PSGToken.TAG_MULTIPUT,regs,self.regBuffer[13]))
-
+    
         #
-        if (args.debug):
+        if (self.debug):
             ss = "TOKEN  {:s} : {:d},{:d}\n".format(s,\
                     self.numSync,self.numPrevSync)
             sys.stderr.write(ss)
@@ -529,10 +535,15 @@ class PSGCompressor(object):
         # Get 15 best gaining reg write lines
         best_lines = sorted(cache.items(),key=lambda x:x[1].instances*x[0].__len__(),reverse=True)[:15]
 
+        # There must be at least 15 cache lines before PASS #2 can proceed..
+        if (best_lines.__len__() < 15):
+            sys.stderr.write(f"Less than 15 cacheable tokens found.. skipping PASS #2\n")
+            return False
+
         orig=pack=0
         unused_cache_line = 1
 
-        if (args.debug):
+        if (self.debug):
             sys.stderr.write("PASS #2 found the following cached tags:\n")
 
         for n in range(best_lines.__len__()):
@@ -542,17 +553,22 @@ class PSGCompressor(object):
             cached_token.cache_line = unused_cache_line
             unused_cache_line += 1
 
-            if (args.debug):
+            if (self.debug):
                 sys.stderr.write(f" Tag '{cached_token_key}' has length {cached_token.encoding.__len__()} "
                     f"and seen {cached_token.instances} times\n")
             
             orig += cached_token_key.__len__() * cached_token.instances
             pack += cached_token.instances
             self.cached_tags[cached_token_key] = cached_token
+            self.bank_size += (cached_token_key.__len__() +1 )
+            self.header_size += (cached_token_key.__len__() +1 )
 
-        if (args.debug):
+        if (self.debug):
             sys.stderr.write(f" PASS #2 original {orig} and packed {pack}\n")
 
+        return True
+
+    #
     def PASS2_replace_with_cached(self):
         max_head = self.tokens.__len__()
         current_head = 0
@@ -565,30 +581,65 @@ class PSGCompressor(object):
                 cache_line = self.cached_tags[current_token.encoding].cache_line 
                 self.tokens[current_head] = PSGToken(PSGToken.TAG_CACHED,bytes([0b01010000|cache_line,]))
 
-                if (args.debug):
+                if (self.debug):
                     sys.stderr.write(f"cache_line {cache_line:2d} replaces '{current_token.encoding}'\n")
 
             current_head += 1
 
-    def PASS3_lz_null(self):
-        # TODO..
-        pass
+    def PASS3_lz_null(self,bankswitch):
+        if (backswitch == False):
+            return
+        
+        max_head = self.tokens.__len__()
+        current_head = 0
+
+        while (current_head < max_head):
+            current_token_size = self.tokens[current_head].encoding.__len__()
+
+            if (current_token_size + self.bank_size + 16 > 16382):
+                self.tokens.insert(current_head+1,PSGToken(PSGToken.TAG_BANKSWITCH,bytes([0b01001111,self.number_of_banks])))
+                self.number_of_banks += 1
+
+                if (self.debug):
+                    sys.stderr.write(f"BANKSITCH PASS3_lz_null at {current_head} with size {self.bank_size}\n")
+
+                self.bank_size = 0
+                current_head += 1
+                max_head += 1
+                current_token_size = 0
+
+            current_head += 1
+            self.bank_size += current_token_size
 
 
-    def PASS3_lz_multi(self):
+    def PASS3_lz_multi(self,bankswitch):
         max_head = self.tokens.__len__()
         encoded_pos = 0
         current_head = 0
 
         while (current_head < max_head):
             current_token = self.tokens[current_head]
-            current_token_length = current_token.encoding.__len__()
+            current_token_size = current_token.encoding.__len__()
             match_count = 0
             match_offset = 65536
             skip_count = 1
             temp_match_length = 0
 
-            if (current_token.encoding not in self.history):
+            if (bankswitch and current_token_size + self.bank_size + 16 > 16382):
+                self.tokens.insert(current_head+1,PSGToken(PSGToken.TAG_BANKSWITCH,bytes([0b01001111,self.number_of_banks])))
+                self.number_of_banks += 1
+
+                if (self.debug):
+                    sys.stderr.write(f"BANKSITCH PASS3_lz_multi at {current_head} with size {self.bank_size}\n")
+
+                self.bank_size = 0
+                current_head += 1
+                max_head += 1
+                current_token_size = 0
+                self.history = {}
+                encoded_pos = 0
+
+            elif (current_token.encoding not in self.history):
                 # add this new frame position if not ever seen before..
                 self.history[current_token.encoding] = (encoded_pos,current_head)
             else:
@@ -617,15 +668,15 @@ class PSGCompressor(object):
 
             # Did we find any matching frames?
             if (match_count == 1 and temp_match_length > 2 and match_offset < 16384):
-                if (args.debug):
+                if (self.debug):
                     sys.stderr.write(f"single LZ match ({match_offset})\n")
                 # Encode single short LZ
                 match_offset |= 0b1000000000000000
                 self.tokens[current_head].encoding = match_offset.to_bytes(2,byteorder='big')
                 self.tokens[current_head].tag = PSGToken.TAG_SINGLELZ
-                current_token_length = 2
+                current_token_size = 2
             elif (temp_match_length > 3):
-                if (args.debug):
+                if (self.debug):
                     sys.stderr.write(f"multipass LZ match ({match_offset},{match_count})\n")
                 # Encode multipass LZA - Note.. match_offset is one too short here.
                 # The offset must be adjusted in the player!
@@ -642,23 +693,40 @@ class PSGCompressor(object):
                 for to_none in range(current_head+1,temp_current_head):
                     self.tokens[to_none] = None
 
-                current_token_length = 3
+                current_token_size = 3
 
             # Advance to the next token..
-            encoded_pos   += current_token_length
+            encoded_pos   += current_token_size
             current_head  += skip_count
+            self.bank_size += current_token_size
 
     #
     # Greedy parsing of history data..
     #
-    def PASS3_lz_single(self):
+    def PASS3_lz_single(self,bankswitch):
         encoded_pos = 0
+        max_head = self.tokens.__len__()
+        current_head = 0
 
-        for current_head in range(self.tokens.__len__()):
+        while (current_head < max_head):
             current_token = self.tokens[current_head]
-            current_token_length = current_token.encoding.__len__()
+            current_token_size = current_token.encoding.__len__()
 
-            if (current_token.encoding not in self.history):
+            if (bankswitch and current_token_size + self.bank_size + 16 > 16382):
+                self.tokens.insert(current_head+1,PSGToken(PSGToken.TAG_BANKSWITCH,bytes([0b01001111,self.number_of_banks])))
+                self.number_of_banks += 1
+
+                if (self.debug):
+                    sys.stderr.write(f"BANKSITCH PASS3_lz_single at {current_head} with size {self.bank_size}\n")
+
+                self.bank_size = 0
+                current_head += 1
+                max_head += 1
+                current_token_size = 0
+                self.history = {}
+                encoded_pos = 0
+
+            elif (current_token.encoding not in self.history):
                 self.history[current_token.encoding] = (encoded_pos,current_head)
             else:
                 # There should not b more than 1 match anyway..
@@ -666,29 +734,31 @@ class PSGCompressor(object):
                 match_offset = encoded_pos - history_pos + 2
         
                 # Make sure we only match against a regput tag..
-                if (current_token_length > 2):
+                if (current_token_size > 2):
                     if (match_offset < 16384):
-                        if (args.debug):
-                            sys.stderr.write(f"LZ match ({match_offset},{current_token_length})\n")
+                        if (self.debug):
+                            sys.stderr.write(f"LZ match ({match_offset},{current_token_size})\n")
                         
                         match_offset |= 0b1000000000000000
                         self.tokens[current_head].encoding = match_offset.to_bytes(2,byteorder='big')
                         self.tokens[current_head].tag = PSGToken.TAG_MULTILZ
 
                         # LZ tag is 2 bytes total..
-                        current_token_length = 2
+                        current_token_size = 2
                     else:
                         # If we are outside offset reach discard the match and update new macth position..
                         self.history[current_token.encoding] = (encoded_pos,current_head)
 
-            encoded_pos += current_token_length
+            encoded_pos += current_token_size
+            self.bank_size += current_token_size
+            current_head += 1
 
     #
     #
     #
     
     def PASS1_outputEOF(self):
-        if (args.debug):
+        if (self.debug):
             sys.stderr.write("TOKEN  end: 00 000000\n")
         
         self.tokens.append(PSGToken(PSGToken.TAG_EOF,bytes([0b00000000,])))
@@ -730,15 +800,13 @@ if __name__ == "__main__":
     else:
         output_file = args.output_file
 
-    if (args.bankswitch):
-        raise NotImplementedError("--bankswitch")
-        exit()
-
     if (args.debug):
         args.verbose = True
 
-    with PSGio(input_file,output_file) as io:
-        psg = PSGCompressor(io)
+    original = 0
+
+    with PSGio(input_file,None) as io:
+        psg = PSGCompressor(io,args.verbose,args.debug)
         hdr = psg.parseHeader()
 
         if (hdr is not None):
@@ -749,8 +817,6 @@ if __name__ == "__main__":
             exit()
 
         cont = True
-
-
 
         # PASS #1
 
@@ -769,9 +835,7 @@ if __name__ == "__main__":
                 # without register changes -> empty frame after delta coding.
                 # Substitute such frame as a frame wait. The wait frame is passed
                 # to frame parser in the psg.numPrevSync
-                #
-                if (args.debug):
-                    sys.stderr.write("Spurious empty frame - check the PSG file\n")
+
                 continue
 
             psg.PASS1_outputSyncTokens(False)
@@ -793,61 +857,85 @@ if __name__ == "__main__":
             if (args.verbose):
                 sys.stderr.write("PASS #2 - cache lines\n")
 
-            psg.PASS2_build_cache()
-            psg.PASS2_replace_with_cached()
+            if (psg.PASS2_build_cache()):
+                psg.PASS2_replace_with_cached()
 
-            if (args.verbose):
-                sys.stderr.write(f"  PSG file length after PASS2 is {psg.get_output_size()} bytes\n")
+                if (args.verbose):
+                    sys.stderr.write(f"  PSG file length after PASS2 is {psg.get_output_size()} bytes\n")
         
         # PASS #3
 
         if (args.lz):
             if (args.verbose):
                 m = "enabled" if args.multi else "disabled"
-
                 sys.stderr.write(f"PASS #3 - LZ crunching with multiple matches {m}\n")
             
             if (args.multi):
                 # Refined multistep LZ
-                psg.PASS3_lz_multi()
+                psg.PASS3_lz_multi(args.bankswitch)
             else:
                 # Legacy single shot LZ
-                psg.PASS3_lz_single()
+                psg.PASS3_lz_single(args.bankswitch)
 
             if (args.verbose):
                 sys.stderr.write(f"  PSG file length after PASS3 is {psg.get_output_size()} bytes\n")
 
         else:
             # Fake PASS #3 to add bank switching and alignment support
-            psg.PASS3_lz_null()
+            psg.PASS3_lz_null(args.bankswitch)
         
-        # PASS #4 - saving
+        # All passes for packing OK
+        original = io.read()
 
+    # Did we manage to pack the PSG input file?
+    if (original == 0):
         if (args.verbose):
-            sys.stderr.write("PASS #4 - saving PSGPacker output\n")
-       
-        # Write cached lines if any
-        if (args.cache):
-            cached_lines = sorted(psg.cached_tags.items(),key=lambda x:x[1].cache_line)
-            for cached_tag,cached_token in cached_lines:
-                io.putb(cached_tag.__len__())
+            sys.stderr.write("PASS #1-3 failure - unable to save output\n")
+        sys.exit(0)
+
+    # PASS #4 - saving
+
+    output_temp = output_file
+    token_head = 0
+
+    for files in range(psg.number_of_banks):
+        if (psg.number_of_banks > 1):
+            output_temp = output_file + chr(files+ord('0'))
+            sys.stderr.write(f"file {output_temp}\n")
+
+        with PSGio(None,output_temp) as io:
+            if (args.verbose):
+                sys.stderr.write(f"PASS #4 - saving PSGPacker output #{files}\n")
+
+            # Write cached lines if any but only for bank 0..
+            if (args.cache and files == 0):
+                cached_lines = sorted(psg.cached_tags.items(),key=lambda x:x[1].cache_line)
+                for cached_tag,cached_token in cached_lines:
+                    io.putb(cached_tag.__len__())
+                        
+                    for n in range(cached_tag.__len__()):
+                        io.putb(cached_tag[n])
+
+            # write packed tokens
+            while (token_head < psg.tokens.__len__()):
+                b = psg.tokens[token_head]
+                token_head += 1
                 
-                for n in range(cached_tag.__len__()):
-                    io.putb(cached_tag[n])
-
-        # write packed tokens
-        for b in psg.tokens:
-            if (b is not None):
-                for n in range(b.encoding.__len__()):
-                    io.putb(b.encoding[n])
-
-        if (args.verbose):
-            packed = psg.get_output_size()
-            original = io.read()
-            sys.stderr.write(f"Final PSG file length is {packed} bytes, packed to {packed/original*100:.1f}%\n")
+                if (b is not None):
+                    for n in range(b.encoding.__len__()):
+                        io.putb(b.encoding[n])
+                    
+                    if (b.tag == PSGToken.TAG_BANKSWITCH):
+                        break
 
 
-#
+    # All done
+    if (args.verbose):
+        packed = psg.get_output_size()
+        sys.stderr.write(f"Final PSG file length is {packed} bytes, packed to {packed/original*100:.1f}%\n")
+
+
+
 #
 # 00 000000          -> EOF
 # 00 nnnnnn          -> wait sync & repeat previour PSG reg output nnnnnn times

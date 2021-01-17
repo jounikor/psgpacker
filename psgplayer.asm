@@ -23,6 +23,7 @@ main:
 
 loop:
         halt
+        ;nop
 
         xor     a
         out     (254),a
@@ -294,16 +295,20 @@ _tag_11nnnnnn:
         ret
 
         ;
-        ; A dummy callback that just returns the same module location
-        ; The callback MUST return the module address in HL and "wait"
+        ; A dummy callback that handles just two part banks witched module
+        ; without actully doing any bank switching..
+        ;
+        ; On return the callback MUST return the module address in HL and wait
         ; amount in A.
+        ;
         ; On entry A = 0 if this was called by the _init/_stop function.
         ;          A > 0 then this was called for a bankswitch.
         ;          D = HIGH(_regbuf) = HIGH(_cache)
 callback:
-        ld      hl,module
         and     a
         jr nz,  _not_init
+        
+        ld      hl,module
 
         ; This code must be included when A=0 and PSGPacker used --cache
         IF  USE_CACHE
@@ -319,8 +324,10 @@ _prep_cache:
         jr nc,  _prep_cache
         ;
         ENDIF
-        
+        ret
+
 _not_init:
+        ld      hl,module1
         xor     a
         ret
 
@@ -345,7 +352,9 @@ _regbuf:
 ;
 ;
 module:
-        incbin  "u5.psg"
+        incbin  "u8.pac0"
+module1:
+        incbin  "u8.pac1"
 
         END main
 
