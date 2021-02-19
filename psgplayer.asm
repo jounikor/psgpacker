@@ -1,7 +1,7 @@
 ;
 ; (c) 2018-21 Jouni Korhonen
 ;
-; PSGPlayer v0.71
+; PSGPlayer v0.72
 ;
 
 
@@ -138,12 +138,12 @@ _play:  ;
         jr z,   _nops       ; 12 if jr, 7 if pass through
         ;
         out     (c),a       ; 12
-_nops:
-        ret     nz          ; 11 if cc true, 5 if cc false (pass through)
-        ret z               ; 11/5
+        ret                 ; 10 if cc true, 5 if cc false (pass through)
+_nops:  cp      0           ; 7
+        ret                 ; 10
         ;
-        ; jr z -> 12+5+11 == 30
-        ; out  -> 7+12+11 == 30
+        ; jr z -> 12+7+10 == 29
+        ; out  -> 7+12+10 == 29
 
 ;
 ; Unpacks the next "frame" of PSG data.
