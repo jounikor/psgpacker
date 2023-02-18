@@ -295,8 +295,10 @@ _tag_11nnnnnn:
         ret
 
         ;
-        ; A dummy callback that handles just two part banks witched module
+        ; A dummy callback that handles just two part banks switched module
         ; without actully doing any bank switching..
+        ;
+        ; You need to modify the callback to work properly in your own project.
         ;
         ; On return the callback MUST return the module address in HL and wait
         ; amount in A.
@@ -311,6 +313,8 @@ callback:
         ld      hl,module
 
         ; This code must be included when A=0 and PSGPacker used --cache
+        ; What it does is to move cache information from the beginning of
+        ; the packed module into the proper location within the _regbuf.
         IF  USE_CACHE
         ;ld      d,HIGH(_cache)
         ld      b,a
