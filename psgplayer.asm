@@ -1,7 +1,7 @@
 ;
-; (c) 2018-21 Jouni Korhonen
+; (c) 2018-25 Jouni Korhonen
 ;
-; PSGPlayer v0.72
+; PSGPlayer v0.73
 ;
 
 
@@ -84,7 +84,7 @@ _init:                  ; 6
 ; Input:
 ;  HL = ptr to callback function to return the module ptr.
 ;
-        ld      (_cb),hl
+        ld      (_smc_cb+1),hl
         ;
 
 _stop:
@@ -109,7 +109,7 @@ _clr:   dec     l
         
         ld      hl,_ret
         push    hl
-        ld      hl,(_cb)
+        ld      hl,(_smc_cb+1)
         jp      (hl)
 
 ;
@@ -152,24 +152,28 @@ _nops:  cp      0           ; 7
 ; timing requirements.
 ;
 _next:  ;
-        ld      a,(_wait)
+_smc_wait:
+        ld      a,0
         dec     a
-        ld      hl,(_pos)
+_smc_pos:
+        ld      hl,0
         call m, _gettags
 _ret:   ;
-        ld      (_wait),a
-        ld      (_pos),hl
+        ld      (_smc_wait+1),a
+        ld      (_smc_pos+1),hl
         ret
         ;
 _gettags:
         ; A = $ff
         ;
-        ld      a,(_rep)
+_smc_rep:
+        ld      a,0
         sub     1
         jr c,   _norestore
-        ld      (_rep),a
+        ld      (_smc_rep+1),a
         jr nz,  _norestore
-        ld      hl,(_resume)
+_smc_resume:
+        ld      hl,0
 _norestore:
         ld      a,(hl)
         and     a
@@ -213,20 +217,22 @@ _callback:                      ; This code is still untested!
         ld      a,(hl)
         ld      hl,_norestore
         push    hl
-        ld      hl,(_cb)
+_smc_cb:
+        jp      0
+        ;ld      hl,0
         ; A > 0
-        jp      (hl)
+        ;jp      (hl)
         ;
 _lz:
         ; TAG 01 rrrrrr nnnnnnnn nnnnnnnn
         ;
         add     a,-31           ; Sets C-flag. This is important!
-        ld      (_rep),a
+        ld      (_smc_rep+1),a
         ld      b,(hl)
         inc     hl
         ld      c,(hl)
         inc     hl
-        ld      (_resume),hl
+        ld      (_smc_resume+1),hl
         sbc     hl,bc
         jr      _norestore
 
@@ -336,13 +342,6 @@ _not_init:
         ret
 
         ;
-_pos:   dw      0           ; PSG song position..
-_resume:
-        dw      0           ; PSG resume song position after LZ  
-_cb:    dw      0           ; Backswitch code callback function
-_rep:   db      0           ; LZ repeat counter
-_wait:  db      0
-
         org     ($+255) & 0xff00    ; Align to 256 bytes
 _regbuf:
         ds      14
