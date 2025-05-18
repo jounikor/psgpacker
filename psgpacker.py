@@ -1,5 +1,5 @@
 #
-# (c) 2018-21 by Jouni 'Mr.Spiv' Korhonen
+# (c) 2018-25 by Jouni 'Mr.Spiv' Korhonen
 # version 0.8
 #
 #

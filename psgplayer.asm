@@ -72,9 +72,8 @@ loop:
 ;
 ; Backswitch function:
 ;  Inputs:
-;     A = 0 if called for init/stop
-;     A > 0 if called for bankswitch
-;     D = HIGH(_regbuf)
+;     A = $ff if called for init/stop
+;     A >= 0 if called for bankswitch
 ;  Returns:
 ;     HL = ptr to the "new" module
 ;     A = 0
