@@ -44,9 +44,8 @@ To stop music:
 Note 1: that the '_regbuf' really needs to be 256 byte aligned.
 Note 2: the player has the following assumptions on the bank switching callback function:
 - The callback MUST return the module address in HL and "wait" amount in A.
-- On entry A = 0 if this was called by the _init/_stop function.
-           A > 0 then this was called for a bankswitch.
-           D = HIGH(_regbuf) = HIGH(_cache)
+- On entry A = $ff if this was called by the _init/_stop function.
+           A > = 0 then this was called for a bankswitch.
 Note 3: The _init and _stop functions actually call the callback to get the module ptr.
 
 The psgplayer.asm has the following assembly time switches:
