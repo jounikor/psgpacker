@@ -587,7 +587,7 @@ class PSGCompressor(object):
             current_head += 1
 
     def PASS3_lz_null(self,bankswitch):
-        if (backswitch == False):
+        if (bankswitch == False):
             return
         
         max_head = self.tokens.__len__()

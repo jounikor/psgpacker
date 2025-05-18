@@ -9,6 +9,10 @@
 USE_CACHE   equ 1
 ; This must be set to 1 if PSGPacker used --oneput
 USE_ONEPUT  equ 1
+; Put your back swithing macro here..
+BANKSWITCH  macro
+            endm
+
 
 
 ;-----------------------------------------------------------------------------
@@ -85,13 +89,12 @@ _init:                  ; 6
 ;  HL = ptr to callback function to return the module ptr.
 ;
         ld      (_smc_cb+1),hl
-        ;
+;
 
 _stop:
 ; _stop also resets the current song position.
 ;
         ;
-        xor     a
 _stop2:
         ld      hl,_regbuf+13
 
@@ -101,16 +104,15 @@ _stop2:
 
         ; Clears _regbuf 
 _clr:   dec     l
-        ld      (hl),a
+        ld      (hl),0
         jr nz,  _clr
 
-        ; D = HIGH(_regbuf)
-        ld      d,h
-        
+        ld      a,$ff
         ld      hl,_ret
         push    hl
         ld      hl,(_smc_cb+1)
         jp      (hl)
+        
 
 ;
 ; Called every frame refresh in a position that needs cycle exact timing.
@@ -300,29 +302,34 @@ _tag_11nnnnnn:
         xor     a
         ret
 
-        ;
-        ; A dummy callback that handles just two part banks switched module
-        ; without actully doing any bank switching..
-        ;
-        ; You need to modify the callback to work properly in your own project.
-        ;
-        ; On return the callback MUST return the module address in HL and wait
-        ; amount in A.
-        ;
-        ; On entry A = 0 if this was called by the _init/_stop function.
-        ;          A > 0 then this was called for a bankswitch.
-        ;          D = HIGH(_regbuf) = HIGH(_cache)
-callback:
-        and     a
-        jr nz,  _not_init
-        
-        ld      hl,module
 
+;
+; A dummy callback that handles just two part banks switched module
+; without actully doing any bank switching..
+;
+; You need to modify the callback to work properly in your own project.
+;
+; On return the callback MUST return the module address in HL and wait
+; amount in A.
+;
+; On entry A = $ff if this was called by the _init/_stop function.
+;          A >= 0 then this was called for a bankswitch.
+
+callback:
+        cp      $ff
+        jr nz,  _not_init
+
+        xor     a
+        BANKSWITCH
+
+        ld      hl,module_bank_0
+        
         ; This code must be included when A=0 and PSGPacker used --cache
         ; What it does is to move cache information from the beginning of
         ; the packed module into the proper location within the _regbuf.
+        ; D = HIGH(_regbuf) = HIGH(_cache)
         IF  USE_CACHE
-        ;ld      d,HIGH(_cache)
+        ld      d,HIGH(_regbuf)
         ld      b,a
         ld      a,00010000b
 _prep_cache:
@@ -334,10 +341,21 @@ _prep_cache:
         jr nc,  _prep_cache
         ;
         ENDIF
+        ld      (_smc_module_0+1),hl
+
+;
+;
+_not_init:
+        BANKWITCH
+        and     a
+        jr nz,  _module_1
+
+_smc_module_0
+        ld      hl,0
         ret
 
-_not_init:
-        ld      hl,module1
+_module_1:
+        ld      hl,module_bank_1
         xor     a
         ret
 
@@ -354,10 +372,10 @@ _regbuf:
         
 ;
 ;
-module:
-        incbin  "u8.pac0"
-module1:
-        incbin  "u8.pac1"
+module_bank_0:
+        incbin  "u8.pac00"
+module_bank_1:
+        incbin  "u8.pac01"
 
         END main
 
