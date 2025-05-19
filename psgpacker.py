@@ -389,12 +389,12 @@ class PSGCompressor(object):
                 v = self.io.getb()
             
                 if (v == -1):
-                    raise RuntimeError("Premature end of file #2")
+                    raise RuntimeError("Premature end of file #2 at {:5x}, t: {:2x}".format(self.io.read(),t))
                 
                 self.regList.append( (t,v) )
                 t = self.io.getb()
                  
-                if (t == -1):
+                if (t == -1 or t == 0xfd):
                     return False
 
                 if (t == 0xff):
