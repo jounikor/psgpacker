@@ -9,7 +9,7 @@
 USE_CACHE   equ 1
 ; This must be set to 1 if PSGPacker used --oneput
 USE_ONEPUT  equ 1
-; Put your back swithing macro here..
+; Put your bank swithing macro here..
 BANKSWITCH  macro
             endm
 
@@ -99,14 +99,14 @@ _stop2:
 
         ; Set R15 to $ff so that _play() will skip it if not exlicitly
         ; changed by the _next() 
-        ld      (hl),$ff
+        ld      a,$ff
+        ld      (hl),a
 
         ; Clears _regbuf 
 _clr:   dec     l
         ld      (hl),0
         jr nz,  _clr
 
-        ld      a,$ff
         ld      hl,_ret
         push    hl
         ld      hl,(_smc_cb+1)
@@ -213,7 +213,7 @@ _oneput:
         ret
         ENDIF
         ;
-_callback:                      ; This code is still untested!
+_callback:
         ; TAG 01 001111 + [8]
         ld      a,(hl)
         ld      hl,_norestore
@@ -305,6 +305,9 @@ _tag_11nnnnnn:
 ;
 ; A dummy callback that handles just two part banks switched module
 ; without actully doing any bank switching..
+; In a case your song does not need to be banked, e.g. you can dedicate more
+; than 16K for it, the bank switching is mostly a blank function taking
+; care of the first time initialization of the song.
 ;
 ; You need to modify the callback to work properly in your own project.
 ;
@@ -322,11 +325,25 @@ callback:
         BANKSWITCH
 
         ld      hl,module_bank_0
-        
-        ; This code must be included when A=0 and PSGPacker used --cache
-        ; What it does is to move cache information from the beginning of
-        ; the packed module into the proper location within the _regbuf.
-        ; D = HIGH(_regbuf) = HIGH(_cache)
+
+;
+; This code must be included when A=0 and PSGPacker used --cache
+; Note that the first "bank" or the first ~16K contains the cache information,
+; which is needed only during the initialization time. The cache lines are
+; used over the entire compressed song and must be skipped by the "normal"
+; runtime bank switching code. Look at the example code below how to do that, which
+; stores the pointer to the song bank0 after the cache information for the runtime
+; back switching callback routine.
+; Cache lines share the 256 bytes area starting with _regbuf. The cache lines
+; are copied to a separate buffer to avoid alignment requirements for the song
+; itself..
+;
+; There are 15 cache lines with the following (byte aligned) format:
+;   byte   0 = n = number of bytes in cacheline
+;   byte   1 to 1+n of cache line information
+;
+; D = HIGH(_regbuf) = HIGH(_cache)
+;
         IF  USE_CACHE
         ld      d,HIGH(_regbuf)
         ld      b,a
