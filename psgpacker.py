@@ -935,20 +935,46 @@ if __name__ == "__main__":
         sys.stderr.write(f"Final PSG file length is {packed} bytes, packed to {packed/original*100:.1f}%\n")
 
 
-
 #
-# 00 000000          -> EOF
-# 00 nnnnnn          -> wait sync & repeat previour PSG reg output nnnnnn times
-# 01 00nnnn          -> register nnnn (0-13) followed by 1 time [8]
-# 01 001110          -> reserved tag
-# 01 001111 bbbbbbbb  -> bank switch mark followed by the next bank number > 0
-# 01 rrrrrr >= 16
-# 01 ffffff          -> Play from cached register bank rrrrrr-16
-#    rrrrrr >= 32
-# 01 rrrrrr nnnnnnnn nnnnnnnn -> point at 2^16-1 bytes in history and play from there for rrrrrr-31 times
-# 10 nnnnnn nnnnnnnn -> point at 2^14-1 bytes in history and play from there once
-# 11 llllll hhhhhhhh -> regs 0 to 13 followed by 1 to 14 times [8]
+# The Compressee PSG format used by PSGPacker:
 #
-
+#  00 000000          -> EOF
+#  00 nnnnnn          -> wait sync & repeat previour PSG reg output nnnnnn times
+#  01 00nnnn          -> register nnnn (0-13) followed by 1 time [8]
+#  01 001110          -> reserved tag
+#  01 001111 bbbbbbbb -> bank switch mark followed by the next bank number > 0
+#  01 rrrrrr >= 16
+#  01 ffffff          -> Play from cached register bank rrrrrr-16
+#     rrrrrr >= 32
+#  01 rrrrrr nnnnnnnn nnnnnnnn -> point at 2^16-1 bytes in history and play from there for rrrrrr-31 times
+#  10 nnnnnn nnnnnnnn -> point at 2^14-1 bytes in history and play from there once
+#  11 llllll hhhhhhhh -> regs 0 to 13 followed by 1 to 14 times [8]
+#
+#
+# Notes on the PSG(1?) format and parsing:
+#
+#  PSG file format contains 16 byte header:
+#    0..3   -> magic == 0x50,0x53,0x47,0x1a == 'PSG',0x1a
+#       4   -> version  
+#       5   -> frequency (if version >= 10 else 0)
+#    6..9   -> reserved
+#  10..15   -> reserved
+#      ..   -> structure data follows
+#
+#  Each structure begins with a command byte:
+#   0..15,nn    -> AY data byte 'nn' to a register 0..15
+#   16..251,nn  -> AY data byte 'nn' for MSX(2?) devices
+#   252         -> Reserved
+#   253         -> End of file/music
+#   254,nn      -> Send to AY and repeat the current AY registers content
+#                  and (unsigned byte) 4*'nn' times (per frame etc)
+#   255         -> Send to Ay AND repeat the current AY registers content
+#                  ONCE (for one frame etc).
+#
+#   Note1: while reading AY data the file end may not have the 0xfd 
+#          command.
+#   Note2: while reading AY data the sequence may end with 0xff or
+#          0xfe,nn or 0xfd command.
+#
 
 # // vim: set autoindent cursorline tabstop=4 softtabstop=4 expandtab
