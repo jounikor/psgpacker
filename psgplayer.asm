@@ -93,14 +93,16 @@ _init:                  ; 6
 _stop:
 ; _stop also resets the current song position.
 ;
-        ;
+        ; Set to initial bank so tha the bank switching routine
+        ; we also do the required initialization for cached lines
+        ; etc..
+        ld      a,$ff
 _stop2:
         ld      hl,_regbuf+13
 
         ; Set R15 to $ff so that _play() will skip it if not exlicitly
         ; changed by the _next() 
-        ld      a,$ff
-        ld      (hl),a
+        ld      (hl),0xff
 
         ; Clears _regbuf 
 _clr:   dec     l
@@ -181,7 +183,7 @@ _norestore:
         ;
         ; TAG 00 00000 -> eof
         ;
-        jp z,   _stop2
+        jp z,   _stop2          ; Implicitly switch to bank 0 (A=0) 
         ;
 _not_eof:
         ld      d,HIGH(_regbuf)
@@ -366,6 +368,8 @@ _not_init:
         and     a
         jr nz,  _module_1
 
+        ; Bank 0 song start can be something else that the
+        ; start of the bank.. 
 _smc_module_0
         ld      hl,0
         ret
