@@ -10,6 +10,7 @@ USE_CACHE   equ 1
 ; This must be set to 1 if PSGPacker used --oneput
 USE_ONEPUT  equ 1
 ; Put your bank swithing macro here..
+; A   must be preserved when exiting the macro
 BANKSWITCH  macro
             endm
 
