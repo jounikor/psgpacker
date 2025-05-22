@@ -653,7 +653,7 @@ class PSGCompressor(object):
                     temp_current_head = current_head
                     temp_history_head = history_head
 
-                    while (temp_current_head < max_head and match_count < 32):
+                    while (temp_history_head < current_head and temp_current_head < max_head and match_count < 32):
                         if (self.tokens[temp_history_head].encoding.__len__() < 4):
                             break
 
@@ -688,6 +688,7 @@ class PSGCompressor(object):
                 # This breaks if match_count becomes "negative"..
                 self.tokens[current_head].encoding = match_count.to_bytes(3,byteorder='big')
                 self.tokens[current_head].tag = PSGToken.TAG_MULTILZ
+
 
                 # And "None" skipped tokens..
                 for to_none in range(current_head+1,temp_current_head):
