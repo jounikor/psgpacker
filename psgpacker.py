@@ -951,26 +951,32 @@ if __name__ == "__main__":
 #  10 nnnnnn nnnnnnnn -> point at 2^14-1 bytes in history and play from there once
 #  11 llllll hhhhhhhh -> regs 0 to 13 followed by 1 to 14 times [8]
 #
+# Note: The history references cannot be recursive meaning the history reference
+#  cannot contain tags:
+#    01 rrrrrr nnnnnnnn nnnnnnnn
+#    10 nnnnnn nnnnnnnn
+#
 #
 # Notes on the PSG(1?) format and parsing:
 #
 #  PSG file format contains 16 byte header:
+#   bytes 
 #    0..3   -> magic == 0x50,0x53,0x47,0x1a == 'PSG',0x1a
 #       4   -> version  
 #       5   -> frequency (if version >= 10 else 0)
 #    6..9   -> reserved
 #  10..15   -> reserved
-#      ..   -> structure data follows
+#      ..   -> structured data follows
 #
-#  Each structure begins with a command byte:
+#  Each structure begins with a command byte followed by a data byte:
 #   0..15,nn    -> AY data byte 'nn' to a register 0..15
 #   16..251,nn  -> AY data byte 'nn' for MSX(2?) devices
-#   252         -> Reserved
+#   252         -> Reserved79
 #   253         -> End of file/music
-#   254,nn      -> Send to AY and repeat the current AY registers content
-#                  and (unsigned byte) 4*'nn' times (per frame etc)
-#   255         -> Send to Ay AND repeat the current AY registers content
-#                  ONCE (for one frame etc).
+#   254,nn      -> Send the current registers content to AY and repeat the
+#                  current AY registers content 4*'nn' times (per frame etc)
+#   255         -> Send the current registers content to AY and repeat the
+#                  current AY registers content ONCE (for one frame etc)
 #
 #   Note1: while reading AY data the file end may not have the 0xfd 
 #          command.

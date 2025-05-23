@@ -1,10 +1,23 @@
-;
+;-----------------------------------------------------------------------------
 ; (c) 2018-25 Jouni Korhonen
 ;
 ; PSGPlayer v0.73
 ;
-
-
+; An example with propwer bank switching callback code/example.
+; Use USR0 mode to run this.
+;
+; Assembler used is Pasmo (available at https://github.com/jounikor/pasmo/):
+;  Pasmo v. 0.5.5.paged (C) 2004-2021 Julian Albo (2018-2023 Jouni Korhonen)
+;
+; Assembler command:
+;  pasmo --tapbas128 --memmap -d psgplayer.asm test.tap
+;
+; PSGPacker command used to compress bbt2.psg:
+;  python3 psgpacker.py --lz --multi --cache --oneput --bankswitch  -v bbt2.psg bbt2.pac
+;
+; bbt2 AY song (c) Fudgepacker
+;
+;
 ; This must be set to 1 if PSGPacker used --cache and must be 0 otherwise
 USE_CACHE   equ 1
 ; This must be set to 1 if PSGPacker used --oneput
@@ -12,7 +25,18 @@ USE_ONEPUT  equ 1
 ; Put your bank swithing macro here..
 ; A   must be preserved when exiting the macro
 BANKSWITCH  macro
-            endm
+        local   _skip
+		push    af
+        cp      2
+        jr nz, _skip
+        inc     a
+_skip:
+		or      0x10
+        ld      bc,32765
+		out     (c),a
+		pop     af
+        
+        endm
 
 
 
@@ -83,7 +107,7 @@ psgplayer:
         jr      _play   ; 0
         jr      _stop   ; 2
         jr      _next   ; 4
-_init:                  ; 6
+;_init:                  ; 6
 ;
 ; Input:
 ;  HL = ptr to callback function to return the module ptr.
@@ -103,7 +127,7 @@ _stop2:
 
         ; Set R15 to $ff so that _play() will skip it if not exlicitly
         ; changed by the _next() 
-        ld      (hl),0xff
+        ld      (hl),$ff
 
         ; Clears _regbuf 
 _clr:   dec     l
@@ -186,7 +210,7 @@ _norestore:
         ;
         jp z,   _stop2          ; Implicitly switch to bank 0 (A=0) 
         ;
-_not_eof:
+        ; Not eof of song yet..
         ld      d,HIGH(_regbuf)
         inc     hl
         jp m,   _tag_1xnnnnnn
@@ -208,7 +232,7 @@ _tag_01rrnnnn:
         IF USE_ONEPUT           ; Does not harm to leave included even if
         cp      15              ; the packed PSGPacker did not use --oneput
         jr z,   _callback
-_oneput:
+        ;
         ; TAG 01 00nnnn + [8]
         ld      e,a
         ldi
@@ -305,7 +329,7 @@ _tag_11nnnnnn:
         ret
 
 
-;
+;-----------------------------------------------------------------------------
 ; A dummy callback that handles just two part banks switched module
 ; without actully doing any bank switching..
 ; In a case your song does not need to be banked, e.g. you can dedicate more
@@ -321,13 +345,12 @@ _tag_11nnnnnn:
 ;          A >= 0 then this was called for a bankswitch.
 
 callback:
+        ld      hl,$c000
         cp      $ff
         jr nz,  _not_init
 
         xor     a
         BANKSWITCH
-
-        ld      hl,module_bank_0
 
 ;
 ; This code must be included when A=0 and PSGPacker used --cache
@@ -360,28 +383,21 @@ _prep_cache:
         jr nc,  _prep_cache
         ;
         ENDIF
-        ld      (_smc_module_0+1),hl
+        ld      (_smc_hl+1),hl
 
 ;
 ;
 _not_init:
-        BANKWITCH
         and     a
-        jr nz,  _module_1
-
-        ; Bank 0 song start can be something else that the
-        ; start of the bank.. 
-_smc_module_0
+        jr nz,  _not_first
+_smc_hl:
         ld      hl,0
-        ret
-
-_module_1:
-        ld      hl,module_bank_1
-        xor     a
+_not_first:
+        BANKSWITCH
         ret
 
         ;
-        org     ($+255) & 0xff00    ; Align to 256 bytes
+	    org     ($+255) & $ff00
 _regbuf:
         ds      14
         ds      2           ; padding
@@ -391,12 +407,21 @@ _regbuf:
                             ; within 256 bytes aligned block.
         ENDIF
         
-;
-;
-module_bank_0:
-        incbin  "u8.pac00"
-module_bank_1:
-        incbin  "u8.pac01"
+;-----------------------------------------------------------------------------
+; Banked packed songs parts
+        
+        BANK    0
+        org     $c000
+        incbin  "bbt2.pac0"
+        
+        BANK    1
+        org     $c000
+        incbin  "bbt2.pac1"
+
+        BANK    3
+        org     $c000
+        incbin  "bbt2.pac2"
+
 
         END main
 
